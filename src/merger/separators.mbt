@@ -185,3 +185,31 @@ pub fn normalize_moonbit_block_separators(
   out
 }
 
+///|
+/// Build a `ConflictBlock` CST leaf from Base, Left, and Right text snippets.
+pub fn make_conflict_node(
+  base_text : String,
+  left_text : String,
+  right_text : String,
+  options : MergeOptions,
+  leading_trivia~ : Array[@cst.Trivia] = [],
+) -> (@cst.CstNode, Int32) {
+  let b_lines = @diff3.split_lines_lossless(base_text)
+  let l_lines = @diff3.split_lines_lossless(left_text)
+  let r_lines = @diff3.split_lines_lossless(right_text)
+  let (rendered, count) = @diff3.render_hunks(
+    [@diff3.Conflict(base=b_lines, left=l_lines, right=r_lines)],
+    options.style,
+    options.labels,
+  )
+  (
+    @cst.CstNode::leaf(
+      id=0,
+      @cst.ConflictBlock,
+      rendered,
+      leading_trivia~,
+      has_error=true,
+    ),
+    count,
+  )
+}
