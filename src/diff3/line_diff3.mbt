@@ -270,3 +270,277 @@ fn ensure_trailing_newline_lines(lines : Array[String]) -> Array[String] {
   out
 }
 
+///|
+/// Render a sequence of `Hunk3` regions using the requested Git `ConflictStyle`.
+pub fn render_hunks(
+  hunks : Array[Hunk3],
+  style : ConflictStyle,
+  labels : MergeLabels,
+) -> (String, Int32) {
+  let buf = StringBuilder()
+  let mut conflicts = 0
+  for hunk in hunks {
+    match hunk {
+      Clean(lines) =>
+        for line in lines {
+          buf.write_string(line)
+        }
+      Conflict(base~, left~, right~) => {
+        let mut b_arr = base
+        let mut l_arr = left
+        let mut r_arr = right
+        if style == ZDiff3 {
+          let mut pre = 0
+          while pre < l_arr.length() &&
+                pre < r_arr.length() &&
+                l_arr[pre] == r_arr[pre] {
+            buf.write_string(l_arr[pre])
+            pre += 1
+          }
+          if pre > 0 {
+            l_arr = copy_slice(l_arr[pre:])
+            r_arr = copy_slice(r_arr[pre:])
+            let b_trim = if pre <= b_arr.length() {
+              pre
+            } else {
+              b_arr.length()
+            }
+            b_arr = copy_slice(b_arr[b_trim:])
+          }
+          let suffix_acc : Array[String] = []
+          while !l_arr.is_empty() &&
+                !r_arr.is_empty() &&
+                l_arr[l_arr.length() - 1] == r_arr[r_arr.length() - 1] {
+            let line = l_arr[l_arr.length() - 1]
+            suffix_acc.push(line)
+            let _ = l_arr.pop()
+            let _ = r_arr.pop()
+            if !b_arr.is_empty() && b_arr[b_arr.length() - 1] == line {
+              let _ = b_arr.pop()
+            }
+          }
+          if l_arr.is_empty() && r_arr.is_empty() {
+            for i = suffix_acc.length() - 1; i >= 0; i = i - 1 {
+              buf.write_string(suffix_acc[i])
+            }
+            continue
+          }
+          conflicts += 1
+          buf.write_string("<<<<<<< ")
+          buf.write_string(labels.left)
+          buf.write_string("\n")
+          for line in ensure_trailing_newline_lines(l_arr) {
+            buf.write_string(line)
+          }
+          buf.write_string("||||||| ")
+          buf.write_string(labels.base)
+          buf.write_string("\n")
+          for line in ensure_trailing_newline_lines(b_arr) {
+            buf.write_string(line)
+          }
+          buf.write_string("=======\n")
+          for line in ensure_trailing_newline_lines(r_arr) {
+            buf.write_string(line)
+          }
+          buf.write_string(">>>>>>> ")
+          buf.write_string(labels.right)
+          buf.write_string("\n")
+          for i = suffix_acc.length() - 1; i >= 0; i = i - 1 {
+            buf.write_string(suffix_acc[i])
+          }
+        } else {
+          conflicts += 1
+          buf.write_string("<<<<<<< ")
+          buf.write_string(labels.left)
+          buf.write_string("\n")
+          for line in ensure_trailing_newline_lines(l_arr) {
+            buf.write_string(line)
+          }
+          if style == Diff3 {
+            buf.write_string("||||||| ")
+            buf.write_string(labels.base)
+            buf.write_string("\n")
+            for line in ensure_trailing_newline_lines(b_arr) {
+              buf.write_string(line)
+            }
+          }
+          buf.write_string("=======\n")
+          for line in ensure_trailing_newline_lines(r_arr) {
+            buf.write_string(line)
+          }
+          buf.write_string(">>>>>>> ")
+          buf.write_string(labels.right)
+          buf.write_string("\n")
+        }
+      }
+    }
+  }
+  (buf.to_string(), conflicts)
+}
+
+///|
+/// Perform Patience-based 3-way line `diff3` (with optional intra-line token merge).
+pub fn merge_lines_diff3(
+  base_text : String,
+  left_text : String,
+  right_text : String,
+  style~ : ConflictStyle = Diff3,
+  labels~ : MergeLabels = MergeLabels::default(),
+  enable_subline~ : Bool = false,
+) -> Diff3Outcome {
+  if left_text == right_text {
+    return {
+      text: left_text,
+      conflict_count: 0,
+      hunks: [Clean(split_lines_lossless(left_text))],
+      subline_resolved: 0,
+    }
+  }
+  if base_text == left_text {
+    return {
+      text: right_text,
+      conflict_count: 0,
+      hunks: [Clean(split_lines_lossless(right_text))],
+      subline_resolved: 0,
+    }
+  }
+  if base_text == right_text {
+    return {
+      text: left_text,
+      conflict_count: 0,
+      hunks: [Clean(split_lines_lossless(left_text))],
+      subline_resolved: 0,
+    }
+  }
+
+  let b_lines = split_lines_lossless(base_text)
+  let l_lines = split_lines_lossless(left_text)
+  let r_lines = split_lines_lossless(right_text)
+  let m_bl = compute_base_matches(b_lines, l_lines)
+  let m_br = compute_base_matches(b_lines, r_lines)
+
+  let hunks : Array[Hunk3] = []
+  let clean_acc : Array[String] = []
+  let mut subline_resolved = 0
+
+  fn flush_clean() -> Unit {
+    if !clean_acc.is_empty() {
+      hunks.push(Clean(clean_acc.copy()))
+      clean_acc.clear()
+    }
+  }
+
+  let mut bi = 0
+  let mut li = 0
+  let mut ri = 0
+  let nb = b_lines.length()
+
+  while bi < nb {
+    let synced = match (m_bl[bi], m_br[bi]) {
+      (Some(lp), Some(rp)) => lp == li && rp == ri
+      _ => false
+    }
+    if synced {
+      clean_acc.push(b_lines[bi])
+      bi += 1
+      li += 1
+      ri += 1
+    } else {
+      let mut probe_b = bi
+      let mut anchor : (Int32, Int32, Int32)? = None
+      while probe_b < nb {
+        match (m_bl[probe_b], m_br[probe_b]) {
+          (Some(lp), Some(rp)) =>
+            if lp >= li && rp >= ri {
+              anchor = Some((probe_b, lp, rp))
+              break
+            }
+          _ => ()
+        }
+        probe_b += 1
+      }
+      let (end_b, end_l, end_r) = match anchor {
+        Some(t) => t
+        None => (nb, l_lines.length(), r_lines.length())
+      }
+      let b_seg = b_lines[bi:end_b]
+      let l_seg = l_lines[li:end_l]
+      let r_seg = r_lines[ri:end_r]
+      let l_unchanged = slices_equal(b_seg, l_seg)
+      let r_unchanged = slices_equal(b_seg, r_seg)
+
+      if l_unchanged && !r_unchanged {
+        for line in r_seg {
+          clean_acc.push(line)
+        }
+      } else if !l_unchanged && r_unchanged {
+        for line in l_seg {
+          clean_acc.push(line)
+        }
+      } else if slices_equal(l_seg, r_seg) {
+        for line in l_seg {
+          clean_acc.push(line)
+        }
+      } else if enable_subline &&
+        b_seg.length() == 1 &&
+        l_seg.length() == 1 &&
+        r_seg.length() == 1 {
+        match try_subline_merge(b_seg[0], l_seg[0], r_seg[0]) {
+          Some(merged_line) => {
+            clean_acc.push(merged_line)
+            subline_resolved += 1
+          }
+          None => {
+            flush_clean()
+            hunks.push(
+              Conflict(
+                base=copy_slice(b_seg),
+                left=copy_slice(l_seg),
+                right=copy_slice(r_seg),
+              ),
+            )
+          }
+        }
+      } else {
+        flush_clean()
+        hunks.push(
+          Conflict(
+            base=copy_slice(b_seg),
+            left=copy_slice(l_seg),
+            right=copy_slice(r_seg),
+          ),
+        )
+      }
+      bi = end_b
+      li = end_l
+      ri = end_r
+    }
+  }
+
+  let l_rem = l_lines[li:]
+  let r_rem = r_lines[ri:]
+  if !l_rem.is_empty() || !r_rem.is_empty() {
+    if l_rem.is_empty() {
+      for line in r_rem {
+        clean_acc.push(line)
+      }
+    } else if r_rem.is_empty() {
+      for line in l_rem {
+        clean_acc.push(line)
+      }
+    } else if slices_equal(l_rem, r_rem) {
+      for line in l_rem {
+        clean_acc.push(line)
+      }
+    } else {
+      flush_clean()
+      hunks.push(
+        Conflict(base=[], left=copy_slice(l_rem), right=copy_slice(r_rem)),
+      )
+    }
+  }
+  flush_clean()
+
+  let (rendered, conflict_count) = render_hunks(hunks, style, labels)
+  { text: rendered, conflict_count, hunks, subline_resolved, }
+}
