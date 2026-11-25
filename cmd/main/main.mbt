@@ -163,3 +163,199 @@ fn flag_on(m : @argparse.Matches, key : String) -> Bool {
   m.flags.get(key).unwrap_or(false)
 }
 
+///|
+fn parse_lang_opt(m : @argparse.Matches) -> @cst.Language? {
+  match first_val(m, "lang") {
+    Some(s) => @cst.Language::from_slug(s)
+    None => None
+  }
+}
+
+///|
+fn main {
+  if maybe_init_browser_mode() {
+    return
+  }
+  let raw_args = @env.args()
+  // Strip executable / script prefix (`node`, `main.js` or `./moongraft`)
+  let user_argv : Array[String] = if raw_args.length() >= 2 &&
+    (raw_args[0].has_suffix("node") || raw_args[0].has_suffix("nodejs")) {
+    let slice : Array[String] = []
+    for i = 2; i < raw_args.length(); i = i + 1 {
+      slice.push(raw_args[i])
+    }
+    slice
+  } else if raw_args.length() >= 1 {
+    let slice : Array[String] = []
+    for i = 1; i < raw_args.length(); i = i + 1 {
+      slice.push(raw_args[i])
+    }
+    slice
+  } else {
+    []
+  }
+
+  let cmd = build_cli()
+  match cmd.parse_outcome(argv=user_argv[:]) {
+    @argparse.Help(text) => {
+      io_print_raw(text)
+      if !text.has_suffix("\n") {
+        io_print_raw("\n")
+      }
+    }
+    @argparse.Version(ver) => {
+      io_print_raw(ver)
+      if !ver.has_suffix("\n") {
+        io_print_raw("\n")
+      }
+    }
+    @argparse.Failed(err) => {
+      io_eprintln("error: " + err.to_string())
+      @env.exit(2)
+    }
+    @argparse.Parsed(matches) =>
+      match matches.subcommand {
+        Some(("merge", sub)) => run_merge_subcommand(sub)
+        Some(("solve", sub)) => run_solve_subcommand(sub)
+        Some(("diff", sub)) => run_diff_subcommand(sub)
+        Some(("inspect", sub)) => run_inspect_subcommand(sub)
+        Some(("bench-suite", sub)) => run_bench_suite_subcommand(sub)
+        Some(("setup", _)) => {
+          io_print_raw("# --- .gitattributes ---\n")
+          io_print_raw(@report.generate_gitattributes_snippet())
+          io_print_raw("\n# --- .gitconfig / ~/.gitconfig ---\n")
+          io_print_raw(@report.generate_gitconfig_snippet())
+        }
+        _ => io_print_raw(cmd.render_help() + "\n")
+      }
+  }
+}
+
+///|
+fn run_merge_subcommand(sub : @argparse.Matches) -> Unit {
+  let base_path = first_val(sub, "base").unwrap_or("")
+  let left_path = first_val(sub, "left").unwrap_or("")
+  let right_path = first_val(sub, "right").unwrap_or("")
+
+  let base_src = match io_read_file(base_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let left_src = match io_read_file(left_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let right_src = match io_read_file(right_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+
+  let logical_path = first_val(sub, "path").unwrap_or(left_path)
+  let lang_opt = parse_lang_opt(sub)
+  let style_str = first_val(sub, "style").unwrap_or("diff3")
+  let style = @diff3.ConflictStyle::from_str(style_str).unwrap_or(@diff3.Diff3)
+
+  let labels = match sub.values.get("label") {
+    Some(ls) =>
+      if ls.length() >= 3 {
+        // Git `-L %X -L %Y -L %P` or `git merge-file -L ours -L base -L theirs`
+        @diff3.MergeLabels::new(ls[1], ls[0], ls[2])
+      } else if ls.length() == 2 {
+        @diff3.MergeLabels::new("BASE", ls[0], ls[1])
+      } else if ls.length() == 1 {
+        @diff3.MergeLabels::new("BASE", ls[0], "THEIRS")
+      } else {
+        @diff3.MergeLabels::default()
+      }
+    None => @diff3.MergeLabels::default()
+  }
+
+  let result = @moongraft.merge(
+    base_src,
+    left_src,
+    right_src,
+    path=logical_path,
+    language=lang_opt,
+    style~,
+    labels~,
+  )
+
+  match first_val(sub, "output") {
+    Some(out_path) =>
+      match io_write_file(out_path, result.merged_text) {
+        Ok(_) => ()
+        Err(e) => {
+          io_eprintln("moongraft: " + e)
+          @env.exit(2)
+        }
+      }
+    None => if !flag_on(sub, "json") { io_print_raw(result.merged_text) }
+  }
+
+  if flag_on(sub, "json") {
+    let j : Json = ToJson::to_json(result)
+    io_print_raw(j.stringify(indent=2) + "\n")
+  }
+
+  // Standard Git merge driver exit protocol: 0 = clean merge, 1 = conflicts remain
+  if result.conflict_count > 0 {
+    @env.exit(1)
+  }
+}
+
+///|
+fn run_solve_subcommand(sub : @argparse.Matches) -> Unit {
+  let file_path = first_val(sub, "file").unwrap_or("")
+  let src = match io_read_file(file_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let lang_opt = parse_lang_opt(sub)
+  let style_str = first_val(sub, "style").unwrap_or("diff3")
+  let style = @diff3.ConflictStyle::from_str(style_str).unwrap_or(@diff3.Diff3)
+  let solved = @moongraft.solve_conflicts(
+    src,
+    path=file_path,
+    language=lang_opt,
+    style~,
+  )
+
+  let target_out : String? = if flag_on(sub, "in_place") {
+    Some(file_path)
+  } else {
+    first_val(sub, "output")
+  }
+  match target_out {
+    Some(out_p) =>
+      match io_write_file(out_p, solved.resolved_text) {
+        Ok(_) => ()
+        Err(e) => {
+          io_eprintln("moongraft: " + e)
+          @env.exit(2)
+        }
+      }
+    None => if !flag_on(sub, "json") { io_print_raw(solved.resolved_text) }
+  }
+
+  if flag_on(sub, "json") {
+    let j : Json = ToJson::to_json(solved)
+    io_print_raw(j.stringify(indent=2) + "\n")
+  }
+
+  if solved.remaining_conflicts > 0 {
+    @env.exit(1)
+  }
+}
+
