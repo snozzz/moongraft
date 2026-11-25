@@ -1,0 +1,54 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/workspace"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "snozzz/moongraft/src/diff3",
+  "snozzz/moongraft/src/merger",
+  "snozzz/moongraft/src/refactor",
+}
+
+// Values
+pub fn merge_n_way_file(StringView, String, Array[String], style? : @diff3.ConflictStyle, propagate_renames? : Bool) -> (@merger.MergeResult, Array[@refactor.SemanticHazard])
+
+pub fn reconcile_agent_workspaces(Map[String, String], Array[Map[String, String]], propagate_renames? : Bool) -> WorkspaceMergePlan
+
+// Errors
+
+// Types and methods
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum FileMergeStatus {
+  Unchanged
+  AddedCleanly
+  DeletedCleanly
+  ModifiedSingleAgent
+  MergedStructurallyClean
+  ConflictedFile
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct FileReconcileReport {
+  path : String
+  language : String
+  status : FileMergeStatus
+  conflict_count : Int32
+  line_diff3_conflicts : Int32
+  merged_content : String?
+  semantic_hazards : Array[@refactor.SemanticHazard]
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct WorkspaceMergePlan {
+  agent_count : Int32
+  total_files : Int32
+  clean_files : Int32
+  conflicted_files : Int32
+  diff3_conflicts_saved : Int32
+  merged_files : Map[String, String]
+  file_reports : Array[FileReconcileReport]
+}
+
+// Type aliases
+
+// Traits
