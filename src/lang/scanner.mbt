@@ -180,3 +180,289 @@ pub fn Scanner::consume_to_eol(
   self.slice_chars(start, self.pos)
 }
 
+///|
+/// Scan a quoted string literal (`"..."` or `'...'`), handling `\` escapes.
+/// Returns `(raw_literal_text, unescaped_inner_text, closed_cleanly)`.
+pub fn Scanner::scan_quoted_string(
+  self : Scanner,
+  allow_multiline~ : Bool = false,
+) -> (String, String, Bool) {
+  let start = self.pos
+  let quote = match self.peek() {
+    Some(q) => q
+    None => return ("", "", false)
+  }
+  self.advance()
+  let inner = StringBuilder()
+  let mut closed = false
+  while !self.is_eof() {
+    let ch = self.peek().unwrap()
+    if ch == '\\' {
+      self.advance()
+      match self.peek() {
+        Some(esc) => {
+          self.advance()
+          match esc {
+            'n' => inner.write_char('\n')
+            'r' => inner.write_char('\r')
+            't' => inner.write_char('\t')
+            '"' => inner.write_char('"')
+            '\'' => inner.write_char('\'')
+            '\\' => inner.write_char('\\')
+            _ => inner.write_char(esc)
+          }
+        }
+        None => break
+      }
+    } else if ch == quote {
+      self.advance()
+      closed = true
+      break
+    } else if !allow_multiline && (ch == '\n' || ch == '\r') {
+      break
+    } else {
+      inner.write_char(ch)
+      self.advance()
+    }
+  }
+  (self.slice_chars(start, self.pos), inner.to_string(), closed)
+}
+
+///|
+/// Collect C/JS/MoonBit-style trivia (`//`, `///`, `///|`, `/* ... */`, whitespace, newlines).
+pub fn Scanner::collect_c_like_trivia(
+  self : Scanner,
+  recognize_moonbit_sep~ : Bool = false,
+  allow_hash_comment~ : Bool = false,
+) -> Array[@cst.Trivia] {
+  let out : Array[@cst.Trivia] = []
+  while !self.is_eof() {
+    match self.consume_spaces() {
+      Some(sp) => {
+        out.push(sp)
+        continue
+      }
+      None => ()
+    }
+    match self.consume_newline() {
+      Some(nl) => {
+        out.push(nl)
+        continue
+      }
+      None => ()
+    }
+    if recognize_moonbit_sep && self.starts_with("///|") {
+      let text = self.consume_to_eol(include_newline=true)
+      out.push(@cst.Trivia::new(@cst.BlockSeparator, text))
+      continue
+    }
+    if self.starts_with("///") {
+      let text = self.consume_to_eol(include_newline=true)
+      out.push(@cst.Trivia::new(@cst.DocComment, text))
+      continue
+    }
+    if self.starts_with("//") {
+      let text = self.consume_to_eol(include_newline=true)
+      out.push(@cst.Trivia::new(@cst.LineComment, text))
+      continue
+    }
+    if allow_hash_comment && self.peek() == Some('#') && !self.starts_with("#|") {
+      let text = self.consume_to_eol(include_newline=true)
+      out.push(@cst.Trivia::new(@cst.LineComment, text))
+      continue
+    }
+    if self.starts_with("/*") {
+      let start = self.pos
+      self.advance(count=2)
+      while !self.is_eof() {
+        if self.starts_with("*/") {
+          self.advance(count=2)
+          break
+        }
+        self.advance()
+      }
+      out.push(
+        @cst.Trivia::new(@cst.BlockComment, self.slice_chars(start, self.pos)),
+      )
+      continue
+    }
+    break
+  }
+  out
+}
+
+///|
+/// Collect horizontal trailing trivia on the SAME line (optional spaces + inline comment + single newline).
+pub fn Scanner::collect_trailing_line_trivia(
+  self : Scanner,
+  allow_slash_comment~ : Bool = true,
+  allow_hash_comment~ : Bool = false,
+) -> Array[@cst.Trivia] {
+  let out : Array[@cst.Trivia] = []
+  match self.consume_spaces() {
+    Some(sp) => out.push(sp)
+    None => ()
+  }
+  if allow_slash_comment && self.starts_with("//") && !self.starts_with("///|") {
+    let text = self.consume_to_eol(include_newline=true)
+    out.push(@cst.Trivia::new(@cst.LineComment, text))
+    return out
+  }
+  if allow_hash_comment && self.peek() == Some('#') {
+    let text = self.consume_to_eol(include_newline=true)
+    out.push(@cst.Trivia::new(@cst.LineComment, text))
+    return out
+  }
+  match self.consume_newline() {
+    Some(nl) => out.push(nl)
+    None => ()
+  }
+  out
+}
+
+///|
+/// Check whether `ch` can start an ASCII/Unicode identifier.
+pub fn is_ident_start(ch : Char) -> Bool {
+  (ch >= 'a' && ch <= 'z') ||
+  (ch >= 'A' && ch <= 'Z') ||
+  ch == '_' ||
+  ch == '$' ||
+  ch.to_int() > 127
+}
+
+///|
+/// Check whether `ch` can continue an identifier.
+pub fn is_ident_continue(ch : Char) -> Bool {
+  is_ident_start(ch) || (ch >= '0' && ch <= '9') || ch == '-'
+}
+
+///|
+/// Scan an identifier starting at `self.pos`.
+pub fn Scanner::scan_ident(
+  self : Scanner,
+  allow_hyphen~ : Bool = false,
+) -> String {
+  let start = self.pos
+  match self.peek() {
+    Some(ch) => if !is_ident_start(ch) { return "" }
+    None => return ""
+  }
+  self.advance()
+  while !self.is_eof() {
+    let ch = self.peek().unwrap()
+    if (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (ch >= '0' && ch <= '9') ||
+      ch == '_' ||
+      ch == '$' ||
+      ch.to_int() > 127 ||
+      (allow_hyphen && ch == '-') {
+      self.advance()
+    } else {
+      break
+    }
+  }
+  self.slice_chars(start, self.pos)
+}
+
+///|
+/// Advance over a balanced delimiter expression (`{...}`, `(...)`, `[...]`),
+/// safely skipping strings, character literals, raw `#|...` lines, and comments.
+/// Returns `(consumed_cleanly)` boolean indicating whether closing delimiter matched.
+pub fn Scanner::skip_balanced_group(
+  self : Scanner,
+  allow_hash_comment~ : Bool = false,
+) -> Bool {
+  let open = match self.peek() {
+    Some('{') => '{'
+    Some('(') => '('
+    Some('[') => '['
+    _ => return false
+  }
+  let close = match open {
+    '{' => '}'
+    '(' => ')'
+    _ => ']'
+  }
+  let stack : Array[Char] = [close]
+  self.advance()
+  while !self.is_eof() && !stack.is_empty() {
+    let ch = self.peek().unwrap()
+    if ch == '"' ||
+      (
+        ch == '\'' &&
+        (
+          self.peek(delta=1) == Some('\\') ||
+          self.peek(delta=2) == Some('\'') ||
+          !is_ident_start(self.peek(delta=1).unwrap_or(' '))
+        )
+      ) {
+      if self.starts_with("\"\"\"") || self.starts_with("'''") {
+        let delim = self.slice_chars(self.pos, self.pos + 3)
+        self.advance(count=3)
+        while !self.is_eof() && !self.starts_with(delim) {
+          if self.peek() == Some('\\') {
+            self.advance(count=2)
+          } else {
+            self.advance()
+          }
+        }
+        if self.starts_with(delim) {
+          self.advance(count=3)
+        }
+      } else {
+        let _ = self.scan_quoted_string(allow_multiline=true)
+      }
+    } else if ch == '`' {
+      self.advance()
+      while !self.is_eof() {
+        let c2 = self.peek().unwrap()
+        if c2 == '\\' {
+          self.advance(count=2)
+        } else if c2 == '`' {
+          self.advance()
+          break
+        } else {
+          self.advance()
+        }
+      }
+    } else if self.starts_with("#|") {
+      let _ = self.consume_to_eol(include_newline=true)
+    } else if self.starts_with("//") {
+      let _ = self.consume_to_eol(include_newline=true)
+    } else if allow_hash_comment && ch == '#' {
+      let _ = self.consume_to_eol(include_newline=true)
+    } else if self.starts_with("/*") {
+      self.advance(count=2)
+      while !self.is_eof() {
+        if self.starts_with("*/") {
+          self.advance(count=2)
+          break
+        }
+        self.advance()
+      }
+    } else if ch == '{' {
+      stack.push('}')
+      self.advance()
+    } else if ch == '(' {
+      stack.push(')')
+      self.advance()
+    } else if ch == '[' {
+      stack.push(']')
+      self.advance()
+    } else if ch == '}' || ch == ')' || ch == ']' {
+      let expected = stack[stack.length() - 1]
+      if ch == expected {
+        let _ = stack.pop()
+        self.advance()
+      } else {
+        // Mismatched delimiter: record failure without looping forever
+        self.advance()
+        return false
+      }
+    } else {
+      self.advance()
+    }
+  }
+  stack.is_empty()
+}
