@@ -1,44 +1,35 @@
-# 2026 MoonBit 黑客松项目申报书（PROPOSAL）
+# 2026 MoonBit 黑客松项目申报书（MoonGraft）
 
-## 1. 项目基本信息
+## 一、基本信息
 
-- **项目名称**：`MoonGraft`（纯 MoonBit 语法感知三路 CST 结构化合并引擎与多智能体 Git Merge Driver）
-- **模块名称**：`snozzz/moongraft`
+- **项目名称**：MoonGraft —— 面向 MoonBit 与多语言生态的无损三路 CST 结构化合并引擎与多智能体 Git Merge Driver
+- **模块名称（`mooncakes.io`）**：`snozzz/moongraft`
+- **参赛者 GitHub ID**：`snozzz`
+- **GitHub 仓库链接**：https://github.com/snozzz/moongraft
 - **开源许可证**：Apache-2.0
-- **参赛赛道 / 方向**：开发者工具 × AI 协同基础设施 × 通用基础库
-- **目标后端**：全后端支持（核心算法包零 FFI，同时支持 `wasm-gc`、`js`、`native` 编译与运行）
+- **项目方向**：可复用基础组件库（`mooncakes.io`） / 开发者工具 / 多智能体协同基础设施
+- **项目类型**：参考成熟语言生态结构化合并范式与学术论文算法的纯 MoonBit 原生重写与扩展
 
----
+## 二、项目简介与真实需求
 
-## 2. 真实痛点与立项背景
+在多人协作与多智能体并行开发（Multi-Agent Worktrees）场景中，传统基于行的 `git merge`（`diff3`）缺乏语法树认知：当两个分支在 MoonBit 文件末尾并行新增 `///|` 顶层函数、移动函数位置并修改内部逻辑、在 `moon.pkg` 中并行引入依赖，或在 `package.json` / `Cargo.toml` / `.yml` 中并行追加键值时，行级合并会频繁产生假冲突（尾逗号陷阱、块顺序冲突），甚至在跨分支函数重命名时产生静默编译损坏。
 
-在 AI 辅助编程与多智能体并行开发（Multi-Agent Coding / Parallel Worktrees）成为主流工作流的背景下，多个 Agent 或开发者同时修改同一仓库已成常态。然而，Git 默认的三路行合并算法（`diff3`）完全不理解编程语言与配置文件的语法结构，导致大量**本无语义冲突的并行修改触发假冲突（False Conflicts）**，甚至在部分场景下产生**静默语义损坏**：
+MoonBit 社区目前已有行级差分库、纯 MoonBit Git（`mizchi/bit`）与双路 AST 对比工具（`moondiff`），但**尚无三路结构化自动合并库**。`MoonGraft` 将 Rust 等成熟生态验证过的无损具体语法树（Lossless CST）三路合并能力引入 MoonBit，既可作为零 FFI 纯库发布到 `mooncakes.io` 供 IDE、Git 工具与 Agent 编排器直接调用，也可作为标准 `git config merge.driver` 命令行与浏览器可视化工作台独立运行。
 
-1. **MoonBit 原生块结构痛点**：MoonBit 官方规范推崇以 `///|` 分隔顺序无关的顶层声明与测试块，但两个分支同时在文件末尾新增函数、移动函数并修改函数体，或同时在 `moon.pkg` 的 `import { ... }` 块中引入新包时，传统 `git merge` 100% 产生行冲突。
-2. **配置文件尾逗号陷阱（Trailing-Comma Trap）**：在 `package.json`、`Cargo.toml` 内联表、GitHub Actions `.yml` 中并行追加依赖或步骤时，行级合并因上一行末尾逗号变化必然冲突，人工或简单脚本消解极易破坏语法合法性。
-3. **跨分支重命名语义悬空引用**：分支 A 将函数 `parse_config` 重命名为 `load_config`，而分支 B 新增了对旧名 `parse_config` 的调用——行级合并表面“零冲突”，实则直接破坏编译。
+## 三、核心功能范围、测试与文档交付
 
-同时，MoonBit 生态虽已有行级差分库（`ruifeng/diff`、`mizchi/bit_diff_core`）、纯 MoonBit Git 实现（`mizchi/bit`）以及双路 AST 对比工具（`moonbit-community/moondiff`），但**完全空白于“无损三路 CST 结构化自动合并（Three-Way Structural Merge）”这一核心拼图**；而 Rust 生态的 `Mergiraf` 既不支持 MoonBit 语法（`.mbt` / `moon.pkg` / `moon.mod`），也无法以零 FFI 纯 Wasm-GC / JS 库形态嵌入浏览器 IDE（Moonpad）或纯 MoonBit 多智能体编排运行时。
+1. **全保真无损红绿具体语法树（`src/cst`）**：完整保留空白、缩进、注释与 `///|` 分隔符，满足往返恒等律 `unparse(parse(s)) == s`，配备 SplitMix64 顺序无关多集结构哈希与精确哈希。
+2. **六大类语言无损解析器与健全性门禁（`src/lang`）**：原生支持 **MoonBit (`.mbt`/`.mbti`)**、**MoonBit 清单 (`moon.pkg`/`moon.mod`)**、**JSON/JSONC**、**TOML**、**YAML** 及 **TypeScript/JS、Python、Rust**。
+3. **双阶段 GumTree 匹配与三路结构化编织（`src/matcher`、`src/merger`）**：支持跨位置 **Move + Edit（移动并修改）复合消解**、JSON/`moon.pkg` 逗号自动规范化、同键新建节递归合并，以及合并后重解析语法/重复键安全回退门禁（零静默数据丢失）。
+4. **事后冲突求解、跨分支重命名审计与多智能体 Octopus 合并（`src/solver`、`src/refactor`、`src/workspace`）**：支持直接消解含 `<<<<<<<` 标记的冲突文件、基于词袋 Dice 相似度检测跨分支重命名悬空引用，以及 $K$ 分支并行内存工作区合并。
+5. **最小化可运行 Demo、CI 与测试验证**：提供一键运行的最小 Demo（`moon run cmd/demo`、`moon run demo.mbtx`、`./demo.sh`）、跨 Linux/macOS/Windows 三平台严格 CI（`moon check --target all --deny-warn`、`moon test --deny-warn`），以及与真实 `git merge-file` 和 `moon check` 编译器对照的 120 轮随机化差分验证套件（`scripts/verify_harness.py`）。
 
----
+## 四、参考与移植合规说明
 
-## 3. 核心技术方案与四大评分维度对齐
-
-### 01 工程深度与实现强度
-- **全保真无损红绿具体语法树（Lossless CST，`src/cst`）**：完整保留源码全部空白、缩进、注释与 `///|` 分隔符，严格满足往返恒等律 `parse_cst(src, lang).unparse() == src`。
-- **六大类语言前端支持（`src/lang`）**：原生支持 **MoonBit (`.mbt`/`.mbti`)**、**MoonBit 清单 (`moon.pkg`/`moon.mod`)**、**JSON/JSONC**、**TOML**、**YAML** 以及 **TypeScript/JavaScript、Python、Rust**。
-- **完整工具链形态**：同时交付可复用的 `mooncakes` 风格库 API、兼容 `git config merge.driver` 协议的命令行工具（支持 `merge`、`solve`、`diff`、`inspect`、`bench-suite`、`setup` 六大子命令）、多智能体 N 路 Octopus 内存工作区合并器（`src/workspace`）以及纯 MoonBit 编译驱动的浏览器交互式可视化工作台（`web/index.html`）。
-
-### 02 技术贡献与攻关
-- **交换律多集 Merkle 哈希设计**：对 `CommutativeByKey` 与 `CommutativeBlocks` 容器采用 SplitMix64 雪崩混合 + XOR/Sum 顺序无关子哈希聚合，使重排或仅格式化变更的子树在 $O(1)$ 时间内精确识别等价性。
-- **双阶段 GumTree + 语义签名匹配与 LIS 移动检测（`src/matcher`）**：结合按高度优先级的自顶向下同构匹配、跨位置声明签名关联（实现 **Move + Edit 移动与内部修改复合消解**）以及基于最长递增子序列（LIS）的最小移动集合判定。
-- **标量字面量原子保护与分隔符自动合成（`src/merger`、`src/diff3`）**：精确重排并合成 JSON / `moon.pkg` 逗号与 `///|` 块分隔符，防止尾逗号语法破坏；在子行词法合并中严格锁定字符串与语义化版本号字面量原子性。
-- **合并后语法与重复键健全性门禁（Post-Merge Soundness Gate）**：任何零冲突合并产物均自动重解析校验括号配对、语法错误节点与重复声明签名；一旦发现潜在不安全情形立即保守回退至 `diff3`，杜绝静默损坏代码。
-- **跨分支重命名与悬空调用检测（`src/refactor`）**：基于去签名词袋 Dice 相似度（$\ge 65\%$）自动识别跨分支符号重命名，并精准报告或无损传播另一分支新增的过期引用。
-
-### 03 生态增量与外部基线对比
-- 以 **GNU/Git `git merge-file --diff3`** 作为外部硬基线：在覆盖 6 类语言的 16 个典型多智能体并发修改场景中，Git `diff3` 仅能无冲突合并 **1/13 (7.7%)**，而 `MoonGraft` 无冲突合并 **13/13 (100%)**，且对 3 类真实语义冲突（如 `Delete-Modify`、同键标量冲突）保持 **100% 准确拦截**。
-- 可直接作为底层库接入纯 MoonBit Git（如 `mizchi/bit`）、AI Agent 并行编排框架以及云端/浏览器端代码编辑器。
-
-### 04 开发与验证能力闭环
-- 构建了**单元测试 + 代数定律属性测试（幂等律、左右单位元律、交换律）+ 外部真实 `git merge-file` 差分测试 + 真实编译器闭环校验（调用 `moon check`、`python3 ast/json/tomllib` 校验合并产物可编译性）+ 120 轮随机化模糊演化测试**（`scripts/verify_harness.py`）+ **`moon bench` 性能基准**的完整工程闭环，并在开发过程中实际捕获并沉淀了 4 项关键回归用例（详见 `ARCHITECTURE.md`）。
+- **参考算法与对标生态项目**：
+  1. AST 匹配算法参考论文 *GumTree: Fine-grained and accurate source code differencing*（ASE 2014，[`GumTreeDiff/gumtree`](https://github.com/GumTreeDiff/gumtree)，仅参考论文算法思想，零代码拷贝）；
+  2. 结构化对比与三路 Git Merge Driver 交互范式对标 [`Wilfred/difftastic`](https://github.com/Wilfred/difftastic)（MIT 许可证）及 Rust 社区结构化三路合并工具范式。
+- **MoonBit 原生重设计与边界说明**：
+  - 全部 11,000+ 行 MoonBit 代码均为零第三方源码拷贝的 Clean-Room 原创实现，采用 **Apache-2.0** 许可证，无任何许可证冲突；
+  - 针对 MoonBit 语言原生扩展了上游工具不具备的 `.mbt` `///|` 块语义、`moon.pkg`/`moon.mod` DSL 解析、跨分支重命名悬空调用分析与多智能体 N 路 Octopus 内存合并接口；
+  - 为保证 `wasm-gc` / `js` / `native` 全后端零 FFI 可移植性，当前版本不依赖外部 C `tree-sitter` 动态语法库，C/C++ 宏展开等留作后续扩展方向。
