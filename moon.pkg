@@ -1,0 +1,15 @@
+import {
+  "snozzz/moongraft/src/cst",
+  "snozzz/moongraft/src/diff3",
+  "snozzz/moongraft/src/lang",
+  "snozzz/moongraft/src/matcher",
+  "snozzz/moongraft/src/merger",
+  "snozzz/moongraft/src/refactor",
+  "snozzz/moongraft/src/report",
+  "snozzz/moongraft/src/solver",
+  "snozzz/moongraft/src/workspace",
+}
+
+import {
+  "moonbitlang/core/bench",
+} for "test"
