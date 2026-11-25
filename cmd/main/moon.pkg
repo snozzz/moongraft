@@ -1,0 +1,18 @@
+import {
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/env",
+  "snozzz/moongraft",
+  "snozzz/moongraft/src/cst",
+  "snozzz/moongraft/src/diff3",
+  "snozzz/moongraft/src/lang",
+  "snozzz/moongraft/src/report",
+}
+
+options(
+  targets: {
+    "io_js.mbt": [ "js" ],
+    "io_other.mbt": [ "wasm", "wasm-gc", "native", "llvm" ],
+  },
+)
+
+pkgtype(kind: "executable")
