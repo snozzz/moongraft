@@ -1,0 +1,52 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/refactor"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "snozzz/moongraft/src/cst",
+}
+
+// Values
+pub fn analyze_cross_branch_renames(String, String, String, @cst.Language) -> RefactorAnalysis
+
+pub fn bare_name_of_signature(String) -> String
+
+pub fn count_identifier_occurrences(String, String) -> Int32
+
+pub fn detect_branch_renames(String, @cst.CstNode, @cst.CstNode) -> Array[SymbolRename]
+
+pub fn rewrite_identifier_lossless(String, String, String) -> (String, Int32)
+
+// Errors
+
+// Types and methods
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct RefactorAnalysis {
+  renames : Array[SymbolRename]
+  hazards : Array[SemanticHazard]
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct SemanticHazard {
+  rename : SymbolRename
+  referencing_branch : String
+  stale_identifier : String
+  occurrence_count : Int32
+  suggestion : String
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct SymbolRename {
+  branch : String
+  syntax_kind : String
+  old_signature : String
+  new_signature : String
+  old_identifier : String
+  new_identifier : String
+  similarity_pct : Int32
+}
+
+// Type aliases
+
+// Traits
