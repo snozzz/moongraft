@@ -448,3 +448,170 @@ fn align_children_of_matched_containers(mapping : TreeMapping) -> Unit {
   }
 }
 
+///|
+/// Produce a human- and machine-readable structural AST edit summary between two versions
+/// (powering `moongraft diff <old> <new>`!).
+pub fn summarize_structural_diff(
+  old_source : String,
+  old_root : @cst.CstNode,
+  new_source : String,
+  new_root : @cst.CstNode,
+) -> Array[StructuralEdit] {
+  let mapping = match_trees(old_root, new_root)
+  let old_sm = @cst.SourceMap::from_source(old_source)
+  let new_sm = @cst.SourceMap::from_source(new_source)
+  let edits : Array[StructuralEdit] = []
+
+  // Detect moved sibling order among matched declarations inside each container
+  let moved_src_ids : @hashmap.HashMap[Int32, Bool] = @hashmap.HashMap([])
+  for sn in mapping.src_nodes {
+    if !sn.is_leaf() && mapping.is_src_matched(sn.id) {
+      let dn = mapping.dst_nodes[mapping.src_to_dst[sn.id]]
+      let d_pos_of : @hashmap.HashMap[Int32, Int32] = @hashmap.HashMap([])
+      for idx = 0; idx < dn.children.length(); idx = idx + 1 {
+        d_pos_of.set(dn.children[idx].id, idx)
+      }
+      // Find Longest Increasing Subsequence (LIS) of destination indices among matched declarations;
+      // items outside the LIS were structurally moved/reordered!
+      let matched_pairs : Array[(Int32, Int32)] = []
+      for sc in sn.children {
+        if sc.kind.is_declaration_or_entry() && mapping.is_src_matched(sc.id) {
+          let did = mapping.src_to_dst[sc.id]
+          match d_pos_of.get(did) {
+            Some(d_idx) => matched_pairs.push((sc.id, d_idx))
+            None => moved_src_ids.set(sc.id, true)
+          }
+        }
+      }
+      let in_lis = compute_lis_membership(matched_pairs)
+      for p in matched_pairs {
+        if !in_lis.get(p.0).unwrap_or(false) {
+          moved_src_ids.set(p.0, true)
+        }
+      }
+    }
+  }
+
+  for sn in mapping.src_nodes {
+    if !sn.kind.is_declaration_or_entry() {
+      continue
+    }
+    let old_ln = Some(old_sm.lookup(sn.span.start).line)
+    match mapping.dst_for(sn.id) {
+      None =>
+        edits.push({
+          kind: Deleted,
+          syntax_kind: sn.kind.label(),
+          signature: sn.signature,
+          old_line: old_ln,
+          new_line: None,
+          summary: "Deleted " + describe_node(sn),
+        })
+      Some(did) => {
+        let dn = mapping.dst_nodes[did]
+        let new_ln = Some(new_sm.lookup(dn.span.start).line)
+        let was_moved = moved_src_ids.get(sn.id).unwrap_or(false)
+        let sem_changed = sn.structural_hash != dn.structural_hash
+        let exact_changed = sn.exact_hash != dn.exact_hash
+        if was_moved && sem_changed {
+          edits.push({
+            kind: MovedAndModified,
+            syntax_kind: sn.kind.label(),
+            signature: sn.signature,
+            old_line: old_ln,
+            new_line: new_ln,
+            summary: "Moved and modified " + describe_node(sn),
+          })
+        } else if was_moved {
+          edits.push({
+            kind: Moved,
+            syntax_kind: sn.kind.label(),
+            signature: sn.signature,
+            old_line: old_ln,
+            new_line: new_ln,
+            summary: "Moved " + describe_node(sn),
+          })
+        } else if sem_changed {
+          // Only report leaf-most declaration change so we don't double-report outer + inner if desired;
+          // reporting top-level declaration gives crisp overview!
+          edits.push({
+            kind: Modified,
+            syntax_kind: sn.kind.label(),
+            signature: sn.signature,
+            old_line: old_ln,
+            new_line: new_ln,
+            summary: "Modified " + describe_node(sn),
+          })
+        } else if exact_changed {
+          edits.push({
+            kind: FormattingChanged,
+            syntax_kind: sn.kind.label(),
+            signature: sn.signature,
+            old_line: old_ln,
+            new_line: new_ln,
+            summary: "Reformatted " + describe_node(sn),
+          })
+        }
+      }
+    }
+  }
+
+  for dn in mapping.dst_nodes {
+    if dn.kind.is_declaration_or_entry() && !mapping.is_dst_matched(dn.id) {
+      let new_ln = Some(new_sm.lookup(dn.span.start).line)
+      edits.push({
+        kind: Inserted,
+        syntax_kind: dn.kind.label(),
+        signature: dn.signature,
+        old_line: None,
+        new_line: new_ln,
+        summary: "Inserted " + describe_node(dn),
+      })
+    }
+  }
+
+  edits
+}
+
+///|
+fn describe_node(n : @cst.CstNode) -> String {
+  match n.signature {
+    Some(sig) => n.kind.label() + " `" + sig + "`"
+    None => n.kind.label()
+  }
+}
+
+///|
+/// Compute membership map of `src_id`s belonging to the Longest Increasing Subsequence
+/// of destination positions `pairs = [(src_id, dst_idx)]`.
+fn compute_lis_membership(
+  pairs : Array[(Int32, Int32)],
+) -> @hashmap.HashMap[Int32, Bool] {
+  let out : @hashmap.HashMap[Int32, Bool] = @hashmap.HashMap([])
+  let n = pairs.length()
+  if n == 0 {
+    return out
+  }
+  let dp = Array::make(n, 1)
+  let prev = Array::make(n, -1)
+  let mut best_len = 1
+  let mut best_end = 0
+  for i = 0; i < n; i = i + 1 {
+    for j = 0; j < i; j = j + 1 {
+      if pairs[j].1 < pairs[i].1 && dp[j] + 1 > dp[i] {
+        dp[i] = dp[j] + 1
+        prev[i] = j
+      }
+    }
+    if dp[i] > best_len {
+      best_len = dp[i]
+      best_end = i
+    }
+  }
+  let mut cur = best_end
+  while cur >= 0 {
+    out.set(pairs[cur].0, true)
+    cur = prev[cur]
+  }
+  out
+}
