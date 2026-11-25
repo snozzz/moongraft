@@ -347,3 +347,95 @@ pub fn render_suite_markdown(summary : SuiteSummary) -> String {
   buf.to_string()
 }
 
+///|
+/// Format structural AST diff edits for human CLI inspection (`moongraft diff`).
+pub fn render_structural_diff(
+  old_path : String,
+  new_path : String,
+  lang : @cst.Language,
+  edits : Array[@matcher.StructuralEdit],
+) -> String {
+  let buf = StringBuilder()
+  buf.write_string("--- ")
+  buf.write_string(old_path)
+  buf.write_string(" (")
+  buf.write_string(lang.slug())
+  buf.write_string(")\n+++ ")
+  buf.write_string(new_path)
+  buf.write_string("\n")
+  if edits.is_empty() {
+    buf.write_string("No structural AST changes detected.\n")
+    return buf.to_string()
+  }
+  for e in edits {
+    let badge = match e.kind {
+      @matcher.Inserted => "[+ INSERT]  "
+      @matcher.Deleted => "[- DELETE]  "
+      @matcher.Modified => "[~ MODIFY]  "
+      @matcher.Moved => "[> MOVED]   "
+      @matcher.MovedAndModified => "[* MOVE+MOD]"
+      @matcher.FormattingChanged => "[. FORMAT]  "
+    }
+    buf.write_string(badge)
+    buf.write_string(" ")
+    buf.write_string(e.summary)
+    match (e.old_line, e.new_line) {
+      (Some(ol), Some(nl)) => {
+        buf.write_string(" (L")
+        buf.write_string(ol.to_string())
+        buf.write_string(" -> L")
+        buf.write_string(nl.to_string())
+        buf.write_string(")")
+      }
+      (Some(ol), None) => {
+        buf.write_string(" (at L")
+        buf.write_string(ol.to_string())
+        buf.write_string(")")
+      }
+      (None, Some(nl)) => {
+        buf.write_string(" (at L")
+        buf.write_string(nl.to_string())
+        buf.write_string(")")
+      }
+      (None, None) => ()
+    }
+    buf.write_string("\n")
+  }
+  buf.to_string()
+}
+
+///|
+/// Generate ready-to-paste `.gitattributes` rules enabling `moongraft` as Git merge driver.
+pub fn generate_gitattributes_snippet() -> String {
+  let s =
+    #|# MoonGraft syntax-aware 3-way CST merge driver
+    #|*.mbt         merge=moongraft
+    #|*.mbti        merge=moongraft
+    #|moon.pkg      merge=moongraft
+    #|moon.mod      merge=moongraft
+    #|*.json        merge=moongraft
+    #|*.jsonc       merge=moongraft
+    #|*.toml        merge=moongraft
+    #|*.yaml        merge=moongraft
+    #|*.yml         merge=moongraft
+    #|*.ts          merge=moongraft
+    #|*.tsx         merge=moongraft
+    #|*.js          merge=moongraft
+    #|*.py          merge=moongraft
+    #|*.rs          merge=moongraft
+    #|
+  s
+}
+
+///|
+/// Generate ready-to-paste `.gitconfig` snippet registering the `moongraft` driver.
+pub fn generate_gitconfig_snippet() -> String {
+  let s =
+    #|[merge]
+    #|    conflictStyle = diff3
+    #|[merge "moongraft"]
+    #|    name = MoonGraft syntax-aware 3-way CST merge driver
+    #|    driver = moongraft merge %O %A %B -o %A -p %P -L %X -L %Y -L %P
+    #|
+  s
+}
