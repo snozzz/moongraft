@@ -1,0 +1,30 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/solver"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "snozzz/moongraft/src/cst",
+  "snozzz/moongraft/src/diff3",
+  "snozzz/moongraft/src/merger",
+}
+
+// Values
+pub fn solve_conflicted_file(String, path? : StringView, language_override? : @cst.Language?, style? : @diff3.ConflictStyle) -> SolveResult
+
+// Errors
+
+// Types and methods
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct SolveResult {
+  resolved_text : String
+  initial_conflicts : Int32
+  remaining_conflicts : Int32
+  had_diff3_base : Bool
+  language : @cst.Language
+  events : Array[@merger.ResolutionEvent]
+}
+
+// Type aliases
+
+// Traits
