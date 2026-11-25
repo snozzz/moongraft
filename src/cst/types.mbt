@@ -248,3 +248,34 @@ pub fn SyntaxKind::is_declaration_or_entry(self : SyntaxKind) -> Bool {
   }
 }
 
+///|
+/// Byte/UTF-16 span `[start, end)` in the original source string.
+#derive(Eq, @debug.Debug, Hash, ToJson)
+pub(all) struct ByteSpan {
+  start : Int32
+  end : Int32
+}
+
+///|
+/// Create a `ByteSpan`.
+pub fn ByteSpan::new(start : Int32, end : Int32) -> ByteSpan {
+  { start, end, }
+}
+
+///|
+/// Length of the span in code units.
+pub fn ByteSpan::len(self : ByteSpan) -> Int32 {
+  if self.end >= self.start {
+    self.end - self.start
+  } else {
+    0
+  }
+}
+
+///|
+/// 1-based line and column coordinate for human-readable diagnostics.
+#derive(Eq, @debug.Debug, Hash, ToJson)
+pub(all) struct LineCol {
+  line : Int32
+  column : Int32
+}
