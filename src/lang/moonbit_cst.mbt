@@ -540,3 +540,155 @@ fn parse_mbt_record_or_adt(
   }
 }
 
+///|
+fn parse_mbt_member_block(
+  sc : Scanner,
+  ids : IdGen,
+  member_kind : @cst.SyntaxKind,
+) -> @cst.CstNode {
+  sc.advance() // '{'
+  let open_trail = sc.collect_trailing_line_trivia(allow_slash_comment=true)
+  let children : Array[@cst.CstNode] = [
+    @cst.CstNode::leaf(
+      id=ids.alloc(),
+      @cst.Punctuation,
+      "{",
+      trailing_trivia=open_trail,
+    ),
+  ]
+  let mut has_err = false
+
+  while !sc.is_eof() {
+    let triv = sc.collect_c_like_trivia()
+    if sc.peek() == Some('}') {
+      sc.advance()
+      let close_trail = sc.collect_trailing_line_trivia(
+        allow_slash_comment=true,
+      )
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          "}",
+          leading_trivia=triv,
+          trailing_trivia=close_trail,
+        ),
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.Block,
+        children,
+        ordering=@cst.CommutativeByKey,
+        has_error=has_err,
+      )
+    }
+
+    let m_start = sc.pos
+    // Extract member identifier (`mut field_name : Type` or `VariantName(Payload)`)
+    let probe = sc.pos
+    let mut tok = sc.scan_ident()
+    while tok == "mut" || tok == "pub" || tok == "priv" {
+      let _ = sc.consume_spaces()
+      tok = sc.scan_ident()
+    }
+    let member_name = tok
+    sc.pos = probe
+
+    while !sc.is_eof() {
+      match sc.peek() {
+        Some('\n') | Some('\r') | Some('}') => break
+        Some('(') | Some('[') | Some('{') => {
+          let ok = sc.skip_balanced_group()
+          if !ok {
+            has_err = true
+          }
+        }
+        Some('/') => if sc.starts_with("//") { break } else { sc.advance() }
+        _ => sc.advance()
+      }
+    }
+    let mut m_end = sc.pos
+    while m_end > m_start &&
+          (sc.chars[m_end - 1] == ' ' || sc.chars[m_end - 1] == '\t') {
+      m_end -= 1
+    }
+    sc.pos = m_end
+    let raw_mem = sc.slice_chars(m_start, sc.pos)
+    let trail = sc.collect_trailing_line_trivia(allow_slash_comment=true)
+    let sig = if !member_name.is_empty() {
+      Some("member:" + member_name)
+    } else {
+      None
+    }
+    children.push(
+      @cst.CstNode::leaf(
+        id=ids.alloc(),
+        member_kind,
+        raw_mem,
+        signature=sig,
+        leading_trivia=triv,
+        trailing_trivia=trail,
+      ),
+    )
+  }
+
+  @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.Block,
+    children,
+    ordering=@cst.CommutativeByKey,
+    has_error=true,
+  )
+}
+
+///|
+fn parse_mbt_simple_decl(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  decl_start : Int32,
+  kind : @cst.SyntaxKind,
+  prefix_tag : String,
+) -> @cst.CstNode {
+  let _ = sc.consume_spaces()
+  let mut name = sc.scan_ident()
+  if name == "mut" {
+    let _ = sc.consume_spaces()
+    name = sc.scan_ident()
+  }
+  let mut has_err = false
+  while !sc.is_eof() {
+    match sc.peek() {
+      Some('\n') | Some('\r') => break
+      Some('{') | Some('(') | Some('[') => {
+        let ok = sc.skip_balanced_group()
+        if !ok {
+          has_err = true
+        }
+      }
+      Some('"') | Some('\'') => {
+        let (_, _, ok) = sc.scan_quoted_string(allow_multiline=true)
+        if !ok {
+          has_err = true
+        }
+      }
+      Some('/') => if sc.starts_with("//") { break } else { sc.advance() }
+      _ => sc.advance()
+    }
+  }
+  let raw = sc.slice_chars(decl_start, sc.pos)
+  let trail = sc.collect_trailing_line_trivia(allow_slash_comment=true)
+  @cst.CstNode::leaf(
+    id=ids.alloc(),
+    kind,
+    raw,
+    signature=if !name.is_empty() {
+      Some(prefix_tag + ":" + name)
+    } else {
+      None
+    },
+    leading_trivia=leading,
+    trailing_trivia=trail,
+    has_error=has_err,
+  )
+}
