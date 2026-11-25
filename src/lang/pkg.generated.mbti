@@ -1,0 +1,69 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/lang"
+
+import {
+  "snozzz/moongraft/src/cst",
+}
+
+// Values
+pub fn detect_language(StringView, content? : String) -> @cst.Language
+
+pub fn is_ident_continue(Char) -> Bool
+
+pub fn is_ident_start(Char) -> Bool
+
+pub fn parse_brace_statement_block(Scanner, IdGen, allow_hash_comment? : Bool) -> @cst.CstNode
+
+pub fn parse_c_family_code_cst(String, @cst.Language) -> @cst.CstNode
+
+pub fn parse_cst(String, @cst.Language) -> @cst.CstNode
+
+pub fn parse_json_cst(String) -> @cst.CstNode
+
+pub fn parse_moon_manifest_cst(String) -> @cst.CstNode
+
+pub fn parse_moonbit_cst(String) -> @cst.CstNode
+
+pub fn parse_python_cst(String) -> @cst.CstNode
+
+pub fn parse_toml_cst(String) -> @cst.CstNode
+
+pub fn parse_yaml_cst(String) -> @cst.CstNode
+
+pub fn verify_well_formed(String, @cst.Language) -> (Bool, Array[String])
+
+// Errors
+
+// Types and methods
+pub struct IdGen {
+  mut next : Int32
+}
+pub fn IdGen::alloc(Self) -> Int32
+pub fn IdGen::new() -> Self
+
+pub struct Scanner {
+  source : String
+  chars : Array[Char]
+  offsets : Array[Int32]
+  len : Int32
+  mut pos : Int32
+}
+pub fn Scanner::advance(Self, count? : Int32) -> Unit
+pub fn Scanner::byte_offset(Self) -> Int32
+pub fn Scanner::collect_c_like_trivia(Self, recognize_moonbit_sep? : Bool, allow_hash_comment? : Bool) -> Array[@cst.Trivia]
+pub fn Scanner::collect_trailing_line_trivia(Self, allow_slash_comment? : Bool, allow_hash_comment? : Bool) -> Array[@cst.Trivia]
+pub fn Scanner::consume_newline(Self) -> @cst.Trivia?
+pub fn Scanner::consume_spaces(Self) -> @cst.Trivia?
+pub fn Scanner::consume_to_eol(Self, include_newline? : Bool) -> String
+pub fn Scanner::is_eof(Self) -> Bool
+pub fn Scanner::new(String) -> Self
+pub fn Scanner::peek(Self, delta? : Int32) -> Char?
+pub fn Scanner::scan_ident(Self, allow_hyphen? : Bool) -> String
+pub fn Scanner::scan_quoted_string(Self, allow_multiline? : Bool) -> (String, String, Bool)
+pub fn Scanner::skip_balanced_group(Self, allow_hash_comment? : Bool) -> Bool
+pub fn Scanner::slice_chars(Self, Int32, Int32) -> String
+pub fn Scanner::starts_with(Self, StringView) -> Bool
+
+// Type aliases
+
+// Traits
