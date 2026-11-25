@@ -242,3 +242,54 @@ fn parse_manifest_call_block(
   )
 }
 
+///|
+fn parse_manifest_assignment_or_stmt(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+) -> @cst.CstNode {
+  let start_pos = sc.pos
+  let ident = sc.scan_ident(allow_hyphen=true)
+  if !ident.is_empty() {
+    let _ = sc.consume_spaces()
+    if sc.peek() == Some('=') {
+      sc.advance()
+      let _ = sc.consume_spaces()
+      let mut ok = true
+      match sc.peek() {
+        Some('[') | Some('{') | Some('(') => ok = sc.skip_balanced_group()
+        Some('"') => {
+          let (_, _, closed) = sc.scan_quoted_string(allow_multiline=true)
+          ok = closed
+        }
+        _ =>
+          while !sc.is_eof() {
+            match sc.peek() {
+              Some('\n') | Some('\r') => break
+              Some('/') =>
+                if sc.starts_with("//") {
+                  break
+                } else {
+                  sc.advance()
+                }
+              _ => sc.advance()
+            }
+          }
+      }
+      let raw = sc.slice_chars(start_pos, sc.pos)
+      let trail = sc.collect_trailing_line_trivia(allow_slash_comment=true)
+      return @cst.CstNode::leaf(
+        id=ids.alloc(),
+        @cst.KeyValue,
+        raw,
+        signature=Some("key:" + ident),
+        leading_trivia=leading,
+        trailing_trivia=trail,
+        has_error=!ok,
+      )
+    }
+  }
+  let rest = sc.consume_to_eol(include_newline=true)
+  let full = sc.slice_chars(start_pos, sc.pos - rest.length()) + rest
+  @cst.CstNode::leaf(id=ids.alloc(), @cst.RawLine, full, leading_trivia=leading)
+}
