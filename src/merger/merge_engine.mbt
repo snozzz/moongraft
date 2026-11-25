@@ -258,3 +258,17 @@ pub fn merge_cst_node(
   )
 }
 
+///|
+/// Convenience helper auto-detecting language from `path` and running `merge_3way`.
+pub fn merge_files_content(
+  path : StringView,
+  base_text : String,
+  left_text : String,
+  right_text : String,
+  style~ : @diff3.ConflictStyle = @diff3.Diff3,
+  labels~ : @diff3.MergeLabels = @diff3.MergeLabels::default(),
+) -> MergeResult {
+  let lang = @lang.detect_language(path, content=left_text)
+  let opts = MergeOptions::for_language(lang, style~, labels~)
+  merge_3way(base_text, left_text, right_text, opts)
+}
