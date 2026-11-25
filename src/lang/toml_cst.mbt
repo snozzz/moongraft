@@ -171,3 +171,70 @@ fn collect_toml_trivia(sc : Scanner) -> Array[@cst.Trivia] {
   out
 }
 
+///|
+fn parse_toml_kv(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+) -> @cst.CstNode {
+  let start_pos = sc.pos
+  // Scan dotted or quoted TOML key up to `=`
+  let key_start = sc.pos
+  while !sc.is_eof() {
+    match sc.peek() {
+      Some('=') | Some('\n') | Some('\r') => break
+      Some('"') | Some('\'') => {
+        let _ = sc.scan_quoted_string()
+      }
+      _ => sc.advance()
+    }
+  }
+  let raw_key_part = sc.slice_chars(key_start, sc.pos)
+  let norm_key = raw_key_part.trim().to_owned()
+  if sc.peek() != Some('=') {
+    let rest = sc.consume_to_eol(include_newline=true)
+    return @cst.CstNode::leaf(
+      id=ids.alloc(),
+      @cst.ErrorFragment,
+      raw_key_part + rest,
+      leading_trivia=leading,
+      span=@cst.ByteSpan::new(sc.offsets[start_pos], sc.byte_offset()),
+      has_error=true,
+    )
+  }
+
+  let key_leaf = @cst.CstNode::leaf(
+    id=ids.alloc(),
+    @cst.Identifier,
+    raw_key_part,
+    has_error=norm_key.is_empty(),
+  )
+  sc.advance() // '='
+  let eq_spaces = match sc.consume_spaces() {
+    Some(sp) => [sp]
+    None => []
+  }
+  let eq_leaf = @cst.CstNode::leaf(
+    id=ids.alloc(),
+    @cst.Operator,
+    "=",
+    trailing_trivia=eq_spaces,
+  )
+
+  let val_node = parse_toml_value(sc, ids)
+  let trail = sc.collect_trailing_line_trivia(
+    allow_slash_comment=false,
+    allow_hash_comment=true,
+  )
+  @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.KeyValue,
+    [key_leaf, eq_leaf, val_node],
+    signature=Some("key:" + norm_key),
+    leading_trivia=leading,
+    trailing_trivia=trail,
+    span=@cst.ByteSpan::new(sc.offsets[start_pos], sc.byte_offset()),
+    has_error=norm_key.is_empty() || val_node.has_error,
+  )
+}
+
