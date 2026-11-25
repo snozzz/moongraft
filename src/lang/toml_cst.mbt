@@ -238,3 +238,226 @@ fn parse_toml_kv(
   )
 }
 
+///|
+fn parse_toml_value(sc : Scanner, ids : IdGen) -> @cst.CstNode {
+  match sc.peek() {
+    Some('{') => parse_toml_inline_table(sc, ids)
+    Some('[') => {
+      let s = sc.pos
+      let ok = sc.skip_balanced_group(allow_hash_comment=true)
+      @cst.CstNode::leaf(
+        id=ids.alloc(),
+        @cst.ArrayNode,
+        sc.slice_chars(s, sc.pos),
+        has_error=!ok,
+      )
+    }
+    Some('"') | Some('\'') => {
+      let s = sc.pos
+      if sc.starts_with("\"\"\"") || sc.starts_with("'''") {
+        let delim = sc.slice_chars(sc.pos, sc.pos + 3)
+        sc.advance(count=3)
+        let mut closed = false
+        while !sc.is_eof() {
+          if sc.starts_with(delim) {
+            sc.advance(count=3)
+            closed = true
+            break
+          }
+          if sc.peek() == Some('\\') {
+            sc.advance(count=2)
+          } else {
+            sc.advance()
+          }
+        }
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.StringLiteral,
+          sc.slice_chars(s, sc.pos),
+          has_error=!closed,
+        )
+      } else {
+        let (raw, _, closed) = sc.scan_quoted_string()
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.StringLiteral,
+          raw,
+          has_error=!closed,
+        )
+      }
+    }
+    _ => {
+      let s = sc.pos
+      while !sc.is_eof() {
+        match sc.peek() {
+          Some('\n') | Some('\r') | Some('#') => break
+          _ => sc.advance()
+        }
+      }
+      // Trim trailing horizontal spaces so inline comment stays in trailing trivia
+      let mut end_p = sc.pos
+      while end_p > s &&
+            (sc.chars[end_p - 1] == ' ' || sc.chars[end_p - 1] == '\t') {
+        end_p -= 1
+      }
+      sc.pos = end_p
+      let raw = sc.slice_chars(s, sc.pos)
+      @cst.CstNode::leaf(
+        id=ids.alloc(),
+        @cst.Expr,
+        raw,
+        has_error=raw.trim().is_empty(),
+      )
+    }
+  }
+}
+
+///|
+fn parse_toml_inline_table(sc : Scanner, ids : IdGen) -> @cst.CstNode {
+  let s_off = sc.byte_offset()
+  sc.advance() // '{'
+  let children : Array[@cst.CstNode] = [
+    @cst.CstNode::leaf(id=ids.alloc(), @cst.Punctuation, "{"),
+  ]
+  let mut has_err = false
+  while !sc.is_eof() {
+    let triv = collect_toml_trivia(sc)
+    if sc.peek() == Some('}') {
+      sc.advance()
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          "}",
+          leading_trivia=triv,
+        ),
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.ObjectNode,
+        children,
+        ordering=@cst.CommutativeByKey,
+        span=@cst.ByteSpan::new(s_off, sc.byte_offset()),
+        has_error=has_err,
+      )
+    }
+    // Scan key up to `=`
+    let k_start = sc.pos
+    while !sc.is_eof() {
+      match sc.peek() {
+        Some('=') | Some('}') | Some(',') | Some('\n') => break
+        _ => sc.advance()
+      }
+    }
+    let k_raw = sc.slice_chars(k_start, sc.pos)
+    let k_norm = k_raw.trim().to_owned()
+    if sc.peek() != Some('=') {
+      has_err = true
+      if sc.pos == k_start && !sc.is_eof() {
+        sc.advance()
+      }
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.ErrorFragment,
+          sc.slice_chars(k_start, sc.pos),
+          leading_trivia=triv,
+          has_error=true,
+        ),
+      )
+      continue
+    }
+    sc.advance() // '='
+    let eq_sp = match sc.consume_spaces() {
+      Some(sp) => [sp]
+      None => []
+    }
+    // Scan inline value up to `,` or `}`
+    let v_start = sc.pos
+    while !sc.is_eof() {
+      match sc.peek() {
+        Some(',') | Some('}') => break
+        Some('[') | Some('{') => {
+          let ok = sc.skip_balanced_group(allow_hash_comment=true)
+          if !ok {
+            has_err = true
+          }
+        }
+        Some('"') | Some('\'') => {
+          let (_, _, ok) = sc.scan_quoted_string()
+          if !ok {
+            has_err = true
+          }
+        }
+        _ => sc.advance()
+      }
+    }
+    let mut v_end = sc.pos
+    while v_end > v_start &&
+          (sc.chars[v_end - 1] == ' ' || sc.chars[v_end - 1] == '\t') {
+      v_end -= 1
+    }
+    sc.pos = v_end
+    let v_raw = sc.slice_chars(v_start, sc.pos)
+    let entry = @cst.CstNode::interior(
+      id=ids.alloc(),
+      @cst.ObjectEntry,
+      [
+        @cst.CstNode::leaf(id=ids.alloc(), @cst.Identifier, k_raw),
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Operator,
+          "=",
+          trailing_trivia=eq_sp,
+        ),
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Expr,
+          v_raw,
+          has_error=v_raw.trim().is_empty(),
+        ),
+      ],
+      signature=Some("key:" + k_norm),
+      leading_trivia=triv,
+    )
+    children.push(entry)
+    let after_sp = collect_toml_trivia(sc)
+    if sc.peek() == Some(',') {
+      sc.advance()
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          ",",
+          leading_trivia=after_sp,
+        ),
+      )
+    } else if sc.peek() == Some('}') {
+      sc.advance()
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          "}",
+          leading_trivia=after_sp,
+        ),
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.ObjectNode,
+        children,
+        ordering=@cst.CommutativeByKey,
+        span=@cst.ByteSpan::new(s_off, sc.byte_offset()),
+        has_error=has_err,
+      )
+    }
+  }
+  @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.ObjectNode,
+    children,
+    ordering=@cst.CommutativeByKey,
+    span=@cst.ByteSpan::new(s_off, sc.byte_offset()),
+    has_error=true,
+  )
+}
