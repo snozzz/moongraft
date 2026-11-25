@@ -1,0 +1,66 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/matcher"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "snozzz/moongraft/src/cst",
+}
+
+// Values
+pub fn match_trees(@cst.CstNode, @cst.CstNode) -> TreeMapping
+
+pub fn summarize_structural_diff(String, @cst.CstNode, String, @cst.CstNode) -> Array[StructuralEdit]
+
+// Errors
+
+// Types and methods
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum EditKind {
+  Inserted
+  Deleted
+  Modified
+  Moved
+  MovedAndModified
+  FormattingChanged
+}
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum MatchReason {
+  Unmatched
+  IsomorphicSubtree
+  SignatureMatched
+  DiceContainer
+  SequenceAligned
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct StructuralEdit {
+  kind : EditKind
+  syntax_kind : String
+  signature : String?
+  old_line : Int32?
+  new_line : Int32?
+  summary : String
+}
+
+#derive(@debug.Debug)
+pub(all) struct TreeMapping {
+  src_nodes : Array[@cst.CstNode]
+  dst_nodes : Array[@cst.CstNode]
+  src_parents : Array[Int32]
+  dst_parents : Array[Int32]
+  src_to_dst : Array[Int32]
+  dst_to_src : Array[Int32]
+  reasons : Array[MatchReason]
+}
+pub fn TreeMapping::dst_for(Self, Int32) -> Int32?
+pub fn TreeMapping::is_dst_matched(Self, Int32) -> Bool
+pub fn TreeMapping::is_src_matched(Self, Int32) -> Bool
+pub fn TreeMapping::link(Self, Int32, Int32, MatchReason) -> Bool
+pub fn TreeMapping::new(@cst.CstNode, @cst.CstNode) -> Self
+pub fn TreeMapping::src_for(Self, Int32) -> Int32?
+
+// Type aliases
+
+// Traits
