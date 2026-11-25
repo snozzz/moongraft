@@ -311,3 +311,12 @@ fn is_fixed_tuple_node(kind : @cst.SyntaxKind) -> Bool {
   }
 }
 
+///|
+fn concat_nodes(slice : ArrayView[@cst.CstNode]) -> String {
+  let buf = StringBuilder()
+  for n in slice {
+    n.write_to(buf)
+  }
+  buf.to_string()
+}
+
