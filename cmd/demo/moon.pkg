@@ -1,0 +1,6 @@
+import {
+  "snozzz/moongraft",
+  "snozzz/moongraft/src/report",
+}
+
+pkgtype(kind: "executable")
