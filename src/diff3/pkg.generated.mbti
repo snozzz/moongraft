@@ -1,0 +1,54 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/diff3"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+}
+
+// Values
+pub fn merge_lines_diff3(String, String, String, style? : ConflictStyle, labels? : MergeLabels, enable_subline? : Bool) -> Diff3Outcome
+
+pub fn render_hunks(Array[Hunk3], ConflictStyle, MergeLabels) -> (String, Int32)
+
+pub fn split_lines_lossless(String) -> Array[String]
+
+pub fn try_subline_merge(String, String, String) -> String?
+
+// Errors
+
+// Types and methods
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum ConflictStyle {
+  Merge
+  Diff3
+  ZDiff3
+}
+pub fn ConflictStyle::from_str(StringView) -> Self?
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct Diff3Outcome {
+  text : String
+  conflict_count : Int32
+  hunks : Array[Hunk3]
+  subline_resolved : Int32
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) enum Hunk3 {
+  Clean(Array[String])
+  Conflict(base~ : Array[String], left~ : Array[String], right~ : Array[String])
+}
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) struct MergeLabels {
+  base : String
+  left : String
+  right : String
+}
+pub fn MergeLabels::default() -> Self
+pub fn MergeLabels::new(String, String, String) -> Self
+
+// Type aliases
+
+// Traits
