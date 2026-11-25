@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MoonGraft — Syntax-Aware 3-Way CST Merge Workbench</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #131a2e;
+      --border: #253154;
+      --text: #e6ecff;
+      --muted: #93a3cc;
+      --accent: #6c8cff;
+      --ok: #2dd4bf;
+      --ok-bg: rgba(45, 212, 191, 0.12);
+      --bad: #fb7185;
+      --bad-bg: rgba(251, 113, 133, 0.12);
+      --mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      padding: 18px 28px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      background: rgba(19, 26, 46, 0.85);
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+    .brand p {
+      margin: 2px 0 0;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    select, input, button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.86rem;
+    }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    main {
+      padding: 20px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    @media (max-width: 1024px) {
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+    .badge {
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+    .badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .badge.bad { background: var(--bad-bg); color: var(--bad); }
+    textarea, pre {
+      margin: 0;
+      padding: 12px 14px;
+      background: transparent;
+      color: var(--text);
+      border: none;
+      font-family: var(--mono);
+      font-size: 0.81rem;
+      line-height: 1.5;
+      min-height: 210px;
+      resize: vertical;
+      overflow: auto;
+      white-space: pre;
+    }
+    ul.events {
+      list-style: none;
+      margin: 0;
+      padding: 12px 14px;
+      font-size: 0.82rem;
+    }
+    ul.events li {
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(37, 49, 84, 0.5);
+    }
+    ul.events li:last-child { border-bottom: none; }
+    code { font-family: var(--mono); color: var(--ok); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>MoonGraft Interactive CST Merge Workbench</h1>
+      <p>Compiled directly from Pure MoonBit &mdash; Lossless CST + GumTree Matching + 3-Way Semantic Merge</p>
+    </div>
+    <div class="controls">
+      <label>Preset:
+        <select id="presetSelect"></select>
+      </label>
+      <label>File Path:
+        <input id="pathInput" value="src/engine.mbt" size="20" />
+      </label>
+      <label>Style:
+        <select id="styleSelect">
+          <option value="diff3">diff3</option>
+          <option value="zdiff3">zdiff3</option>
+          <option value="merge">merge</option>
+        </select>
+      </label>
+      <button class="primary" id="runBtn">Run 3-Way Merge</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="grid-3">
+      <div class="card">
+        <div class="card-head"><span>BASE (%O — Common Ancestor)</span></div>
+        <textarea id="baseEditor" spellcheck="false"></textarea>
+      </div>
+      <div class="card">
+        <div class="card-head"><span>OURS (%A — Agent / Branch Left)</span></div>
+        <textarea id="leftEditor" spellcheck="false"></textarea>
+      </div>
+      <div class="card">
+        <div class="card-head"><span>THEIRS (%B — Agent / Branch Right)</span></div>
+        <textarea id="rightEditor" spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <span>Standard Line-Based <code>git merge-file --diff3</code></span>
+          <span class="badge" id="diff3Badge">0 conflicts</span>
+        </div>
+        <pre id="diff3Output"></pre>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span>MoonGraft Syntax-Aware 3-Way CST Merge</span>
+          <span class="badge" id="mgBadge">0 conflicts</span>
+        </div>
+        <pre id="mgOutput"></pre>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <span>Explainable CST Resolution Log</span>
+          <span class="badge ok" id="langBadge">language</span>
+        </div>
+        <ul class="events" id="eventsList"></ul>
+      </div>
+      <div class="card">
+        <div class="card-head"><span>Merged Lossless CST (S-Expression View)</span></div>
+        <pre id="sexpOutput"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="./moongraft.bundle.js"></script>
+  <script>
+    const PRESETS = [
+      {
+        name: "1. MoonBit Move + Edit Refactoring",
+        path: "src/engine.mbt",
+        base: `///|\npub fn helper() -> Int {\n  1\n}\n\n///|\npub fn compute(x : Int) -> Int {\n  let step = x + 1\n  step * 2\n}\n`,
+        left: `///|\npub fn compute(x : Int) -> Int {\n  let step = x + 1\n  step * 2\n}\n\n///|\npub fn helper() -> Int {\n  1\n}\n\n///|\npub fn agent_a_metric() -> String {\n  "ok"\n}\n`,
+        right: `///|\npub fn helper() -> Int {\n  1\n}\n\n///|\npub fn compute(x : Int) -> Int {\n  let step = x + 42\n  step * 2\n}\n\n///|\npub fn agent_b_health() -> Bool {\n  true\n}\n`
+      },
+      {
+        name: "2. package.json Trailing-Comma Append Trap",
+        path: "package.json",
+        base: `{\n  "name": "ai-workspace",\n  "dependencies": {\n    "react": "^19.0.0"\n  }\n}\n`,
+        left: `{\n  "name": "ai-workspace",\n  "dependencies": {\n    "react": "^19.0.0",\n    "zod": "^3.23.8"\n  }\n}\n`,
+        right: `{\n  "name": "ai-workspace",\n  "dependencies": {\n    "react": "^19.0.0",\n    "vite": "^6.0.0"\n  }\n}\n`
+      },
+      {
+        name: "3. moon.pkg Parallel Package Imports",
+        path: "src/merger/moon.pkg",
+        base: `import {\n  "moonbitlang/core/debug",\n}\n`,
+        left: `import {\n  "moonbitlang/core/debug",\n  "moonbitlang/core/hashmap",\n}\n`,
+        right: `import {\n  "moonbitlang/core/debug",\n  "moonbitlang/core/argparse",\n}\n`
+      },
+      {
+        name: "4. Cargo.toml Inline Table + Dependencies",
+        path: "Cargo.toml",
+        base: `[package]\nname = "agent"\nversion = "0.1.0"\n\n[dependencies]\nserde = { version = "1.0", features = ["std"] }\n`,
+        left: `[package]\nname = "agent"\nversion = "0.1.0"\n\n[dependencies]\nserde = { version = "1.0", features = ["std"], default-features = false }\nclap = "4.5"\n`,
+        right: `[package]\nname = "agent"\nversion = "0.1.0"\n\n[dependencies]\nserde = { version = "1.0", features = ["std"], optional = true }\ntokio = "1.40"\n`
+      },
+      {
+        name: "5. GitHub Actions YAML Parallel Steps",
+        path: ".github/workflows/ci.yml",
+        base: `name: CI\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n`,
+        left: `name: CI\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n      - name: Check formatting\n        run: moon fmt --check\n`,
+        right: `name: CI\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n      - name: Run unit tests\n        run: moon test\n`
+      },
+      {
+        name: "6. True Conflict Safety (Delete vs Modify)",
+        path: "policy.json",
+        base: `{\n  "strict": true,\n  "max_budget": 100\n}\n`,
+        left: `{\n  "strict": true\n}\n`,
+        right: `{\n  "strict": true,\n  "max_budget": 500\n}\n`
+      }
+    ];
+
+    const presetSelect = document.getElementById("presetSelect");
+    const pathInput = document.getElementById("pathInput");
+    const styleSelect = document.getElementById("styleSelect");
+    const baseEditor = document.getElementById("baseEditor");
+    const leftEditor = document.getElementById("leftEditor");
+    const rightEditor = document.getElementById("rightEditor");
+
+    PRESETS.forEach((p, idx) => {
+      const opt = document.createElement("option");
+      opt.value = idx;
+      opt.textContent = p.name;
+      presetSelect.appendChild(opt);
+    });
+
+    function loadPreset(idx) {
+      const p = PRESETS[idx];
+      pathInput.value = p.path;
+      baseEditor.value = p.base;
+      leftEditor.value = p.left;
+      rightEditor.value = p.right;
+      runMerge();
+    }
+
+    function runMerge() {
+      if (!globalThis.MoonGraft) {
+        document.getElementById("mgOutput").textContent =
+          "Build JS bundle first: moon build --target js --release && cp _build/js/release/build/cmd/main/main.js web/moongraft.bundle.js";
+        return;
+      }
+      const raw = globalThis.MoonGraft.mergeJson(
+        pathInput.value,
+        baseEditor.value,
+        leftEditor.value,
+        rightEditor.value,
+        styleSelect.value
+      );
+      const data = JSON.parse(raw);
+      document.getElementById("diff3Output").textContent = data.diff3_text;
+      document.getElementById("mgOutput").textContent = data.moongraft_text;
+      document.getElementById("sexpOutput").textContent = data.merged_cst_sexp;
+      document.getElementById("langBadge").textContent = "lang: " + data.language + (data.syntax_valid ? " ✓ valid" : "");
+
+      const d3b = document.getElementById("diff3Badge");
+      d3b.textContent = data.diff3_conflicts + (data.diff3_conflicts === 1 ? " conflict" : " conflicts");
+      d3b.className = "badge " + (data.diff3_conflicts === 0 ? "ok" : "bad");
+
+      const mgb = document.getElementById("mgBadge");
+      mgb.textContent = data.moongraft_conflicts + (data.moongraft_conflicts === 1 ? " conflict" : " conflicts");
+      mgb.className = "badge " + (data.moongraft_conflicts === 0 ? "ok" : "bad");
+
+      const ul = document.getElementById("eventsList");
+      ul.innerHTML = "";
+      if (!data.events || data.events.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "No special structural passes required.";
+        ul.appendChild(li);
+      } else {
+        data.events.forEach(ev => {
+          const li = document.createElement("li");
+          const kind = Array.isArray(ev.kind) ? ev.kind[0] : ev.kind;
+          li.innerHTML = `<code>[${kind}]</code> <strong>${ev.target}</strong> &mdash; ${ev.detail}`;
+          ul.appendChild(li);
+        });
+      }
+    }
+
+    presetSelect.addEventListener("change", e => loadPreset(Number(e.target.value)));
+    styleSelect.addEventListener("change", runMerge);
+    document.getElementById("runBtn").addEventListener("click", runMerge);
+    [baseEditor, leftEditor, rightEditor, pathInput].forEach(el => el.addEventListener("input", runMerge));
+    loadPreset(0);
+  </script>
+</body>
+</html>
