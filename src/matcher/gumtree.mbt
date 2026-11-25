@@ -371,3 +371,80 @@ fn recover_containers_bottom_up(
   }
 }
 
+///|
+fn collect_subtree_ids(root : @cst.CstNode) -> Array[Int32] {
+  let ids : Array[Int32] = []
+  fn walk(n : @cst.CstNode) -> Unit {
+    for c in n.children {
+      ids.push(c.id)
+      walk(c)
+    }
+  }
+
+  walk(root)
+  ids
+}
+
+///|
+/// Align remaining unmatched leaf/statement children inside matched containers using Patience diff
+/// over `(kind.tag(), structural_hash)` and declaration headers (`Keyword` at child slot 0).
+fn align_children_of_matched_containers(mapping : TreeMapping) -> Unit {
+  for sn in mapping.src_nodes {
+    if sn.is_leaf() || !mapping.is_src_matched(sn.id) {
+      continue
+    }
+    let dn = mapping.dst_nodes[mapping.src_to_dst[sn.id]]
+    // If slot 0 is a declaration header `Keyword` on both (`fn foo(...)` -> `fn foo(x : Int)`), match it!
+    if !sn.children.is_empty() &&
+      !dn.children.is_empty() &&
+      sn.children[0].kind == @cst.Keyword &&
+      dn.children[0].kind == @cst.Keyword &&
+      !mapping.is_src_matched(sn.children[0].id) &&
+      !mapping.is_dst_matched(dn.children[0].id) {
+      let _ = mapping.link(
+        sn.children[0].id,
+        dn.children[0].id,
+        SequenceAligned,
+      )
+    }
+
+    // Align unmatched non-punctuation children by structural hash via Patience diff
+    let s_unmatched : Array[@cst.CstNode] = []
+    let s_keys : Array[(UInt64, UInt64)] = []
+    for sc in sn.children {
+      if !mapping.is_src_matched(sc.id) && sc.kind != @cst.Punctuation {
+        s_unmatched.push(sc)
+        s_keys.push((sc.kind.tag(), sc.structural_hash))
+      }
+    }
+    let d_unmatched : Array[@cst.CstNode] = []
+    let d_keys : Array[(UInt64, UInt64)] = []
+    for dc in dn.children {
+      if !mapping.is_dst_matched(dc.id) && dc.kind != @cst.Punctuation {
+        d_unmatched.push(dc)
+        d_keys.push((dc.kind.tag(), dc.structural_hash))
+      }
+    }
+    if !s_unmatched.is_empty() && !d_unmatched.is_empty() {
+      let diff = @diff.Diff(
+        old=s_keys[:],
+        new=d_keys[:],
+        algorithm=@diff.Patience,
+      )
+      for edit in diff.edits() {
+        match edit {
+          @diff.Equal(old_index~, new_index~, len~) =>
+            for k = 0; k < len; k = k + 1 {
+              let _ = mapping.link(
+                s_unmatched[old_index + k].id,
+                d_unmatched[new_index + k].id,
+                SequenceAligned,
+              )
+            }
+          _ => ()
+        }
+      }
+    }
+  }
+}
+
