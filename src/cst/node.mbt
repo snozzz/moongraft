@@ -142,3 +142,39 @@ pub fn CstNode::is_leaf(self : CstNode) -> Bool {
   self.children.is_empty()
 }
 
+///|
+/// Write the complete lossless source representation of `self` to `buf`.
+pub fn CstNode::write_to(self : CstNode, buf : StringBuilder) -> Unit {
+  write_trivia(buf, self.leading_trivia)
+  if self.children.is_empty() {
+    buf.write_string(self.text)
+  } else {
+    for child in self.children {
+      child.write_to(buf)
+    }
+  }
+  write_trivia(buf, self.trailing_trivia)
+}
+
+///|
+/// Reconstruct the exact lossless source text represented by `self`.
+pub fn CstNode::unparse(self : CstNode) -> String {
+  let buf = StringBuilder()
+  self.write_to(buf)
+  buf.to_string()
+}
+
+///|
+/// Return the semantic body text of a node WITHOUT outer leading/trailing trivia.
+pub fn CstNode::trimmed_source(self : CstNode) -> String {
+  let buf = StringBuilder()
+  if self.children.is_empty() {
+    buf.write_string(self.text)
+  } else {
+    for child in self.children {
+      child.write_to(buf)
+    }
+  }
+  buf.to_string().trim().to_owned()
+}
+
