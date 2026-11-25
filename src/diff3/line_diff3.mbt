@@ -40,3 +40,27 @@ fn compute_base_matches(
   map
 }
 
+///|
+/// Check exact equality of two string slices.
+fn slices_equal(a : ArrayView[String], b : ArrayView[String]) -> Bool {
+  if a.length() != b.length() {
+    return false
+  }
+  for i = 0; i < a.length(); i = i + 1 {
+    if a[i] != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Copy an `ArrayView[String]` into an owned `Array[String]`.
+fn copy_slice(v : ArrayView[String]) -> Array[String] {
+  let out : Array[String] = Array(capacity=v.length())
+  for item in v {
+    out.push(item)
+  }
+  out
+}
+
