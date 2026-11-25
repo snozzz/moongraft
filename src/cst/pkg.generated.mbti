@@ -1,0 +1,185 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/cst"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+}
+
+// Values
+pub fn avalanche64(UInt64) -> UInt64
+
+pub fn collect_preorder(CstNode) -> Array[CstNode]
+
+pub fn detect_indent_unit(String) -> String
+
+pub fn extract_comments(Array[Trivia]) -> Array[Trivia]
+
+pub fn find_duplicate_signatures(CstNode) -> Array[String]
+
+pub fn format_sexp(CstNode, max_depth? : Int32) -> String
+
+pub fn hash_normalized_code_str(UInt64, StringView) -> UInt64
+
+pub fn hash_str(UInt64, StringView) -> UInt64
+
+pub fn hash_u64(UInt64, UInt64) -> UInt64
+
+pub fn reindex_tree(CstNode, start_id? : Int32) -> (CstNode, Int32)
+
+pub fn render_trivia(Array[Trivia]) -> String
+
+pub fn seed_for_kind(SyntaxKind, ChildOrdering) -> UInt64
+
+pub fn write_trivia(StringBuilder, Array[Trivia]) -> Unit
+
+// Errors
+
+// Types and methods
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) struct ByteSpan {
+  start : Int32
+  end : Int32
+}
+pub fn ByteSpan::len(Self) -> Int32
+pub fn ByteSpan::new(Int32, Int32) -> Self
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum ChildOrdering {
+  Sequential
+  CommutativeByKey
+  CommutativeBlocks
+}
+
+#derive(Eq, @debug.Debug)
+pub(all) struct CstNode {
+  id : Int32
+  kind : SyntaxKind
+  ordering : ChildOrdering
+  signature : String?
+  text : String
+  children : Array[CstNode]
+  leading_trivia : Array[Trivia]
+  trailing_trivia : Array[Trivia]
+  span : ByteSpan
+  structural_hash : UInt64
+  exact_hash : UInt64
+  height : Int32
+  size : Int32
+  has_error : Bool
+}
+pub fn CstNode::interior(id~ : Int32, SyntaxKind, Array[Self], ordering? : ChildOrdering, signature? : String?, leading_trivia? : Array[Trivia], trailing_trivia? : Array[Trivia], span? : ByteSpan, has_error? : Bool) -> Self
+pub fn CstNode::is_leaf(Self) -> Bool
+pub fn CstNode::leaf(id~ : Int32, SyntaxKind, String, signature? : String?, leading_trivia? : Array[Trivia], trailing_trivia? : Array[Trivia], span? : ByteSpan, has_error? : Bool) -> Self
+pub fn CstNode::trimmed_source(Self) -> String
+pub fn CstNode::unparse(Self) -> String
+pub fn CstNode::with_trivia(Self, leading_trivia? : Array[Trivia], trailing_trivia? : Array[Trivia]) -> Self
+pub fn CstNode::write_to(Self, StringBuilder) -> Unit
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum Language {
+  MoonBit
+  MoonManifest
+  Json
+  Toml
+  Yaml
+  TypeScript
+  Python
+  Rust
+  PlainText
+}
+pub fn Language::from_slug(StringView) -> Self?
+pub fn Language::slug(Self) -> String
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) struct LineCol {
+  line : Int32
+  column : Int32
+}
+
+#derive(@debug.Debug)
+pub struct SourceMap {
+  line_starts : Array[Int32]
+  total_len : Int32
+}
+pub fn SourceMap::from_source(String) -> Self
+pub fn SourceMap::lookup(Self, Int32) -> LineCol
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum SyntaxKind {
+  SourceFile
+  ModuleBlock
+  ImportGroup
+  ImportItem
+  FnDecl
+  TestDecl
+  StructDecl
+  EnumDecl
+  SuberrorDecl
+  TraitDecl
+  ImplDecl
+  TypeDecl
+  ConstDecl
+  LetDecl
+  ClassDecl
+  InterfaceDecl
+  FieldDecl
+  VariantDecl
+  ParamList
+  Param
+  Block
+  Stmt
+  Expr
+  ObjectNode
+  ObjectEntry
+  ArrayNode
+  ArrayElement
+  TableSection
+  ArrayOfTablesSection
+  KeyValue
+  MappingNode
+  MappingEntry
+  SequenceNode
+  SequenceItem
+  Attribute
+  DelimiterGroup
+  Punctuation
+  Keyword
+  Identifier
+  StringLiteral
+  NumberLiteral
+  BoolLiteral
+  NullLiteral
+  Operator
+  RawLine
+  ConflictBlock
+  ErrorFragment
+}
+pub fn SyntaxKind::is_declaration_or_entry(Self) -> Bool
+pub fn SyntaxKind::label(Self) -> String
+pub fn SyntaxKind::tag(Self) -> UInt64
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) struct Trivia {
+  kind : TriviaKind
+  text : String
+}
+pub fn Trivia::block_sep(text? : String) -> Self
+pub fn Trivia::has_comment(Self) -> Bool
+pub fn Trivia::new(TriviaKind, String) -> Self
+pub fn Trivia::newline(text? : String) -> Self
+pub fn Trivia::spaces(String) -> Self
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum TriviaKind {
+  Whitespace
+  Newline
+  LineComment
+  DocComment
+  BlockSeparator
+  BlockComment
+}
+
+// Type aliases
+
+// Traits
