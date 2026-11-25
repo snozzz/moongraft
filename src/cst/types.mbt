@@ -57,3 +57,194 @@ pub(all) enum ChildOrdering {
   CommutativeBlocks
 }
 
+///|
+/// Concrete syntax categories unified across supported languages.
+#derive(Eq, @debug.Debug, Hash, ToJson)
+pub(all) enum SyntaxKind {
+  SourceFile
+  ModuleBlock
+  ImportGroup
+  ImportItem
+  FnDecl
+  TestDecl
+  StructDecl
+  EnumDecl
+  SuberrorDecl
+  TraitDecl
+  ImplDecl
+  TypeDecl
+  ConstDecl
+  LetDecl
+  ClassDecl
+  InterfaceDecl
+  FieldDecl
+  VariantDecl
+  ParamList
+  Param
+  Block
+  Stmt
+  Expr
+  ObjectNode
+  ObjectEntry
+  ArrayNode
+  ArrayElement
+  TableSection
+  ArrayOfTablesSection
+  KeyValue
+  MappingNode
+  MappingEntry
+  SequenceNode
+  SequenceItem
+  Attribute
+  DelimiterGroup
+  Punctuation
+  Keyword
+  Identifier
+  StringLiteral
+  NumberLiteral
+  BoolLiteral
+  NullLiteral
+  Operator
+  RawLine
+  ConflictBlock
+  ErrorFragment
+}
+
+///|
+/// Human-readable label for S-expressions and structural diff reports.
+pub fn SyntaxKind::label(self : SyntaxKind) -> String {
+  match self {
+    SourceFile => "SourceFile"
+    ModuleBlock => "ModuleBlock"
+    ImportGroup => "ImportGroup"
+    ImportItem => "ImportItem"
+    FnDecl => "FnDecl"
+    TestDecl => "TestDecl"
+    StructDecl => "StructDecl"
+    EnumDecl => "EnumDecl"
+    SuberrorDecl => "SuberrorDecl"
+    TraitDecl => "TraitDecl"
+    ImplDecl => "ImplDecl"
+    TypeDecl => "TypeDecl"
+    ConstDecl => "ConstDecl"
+    LetDecl => "LetDecl"
+    ClassDecl => "ClassDecl"
+    InterfaceDecl => "InterfaceDecl"
+    FieldDecl => "FieldDecl"
+    VariantDecl => "VariantDecl"
+    ParamList => "ParamList"
+    Param => "Param"
+    Block => "Block"
+    Stmt => "Stmt"
+    Expr => "Expr"
+    ObjectNode => "ObjectNode"
+    ObjectEntry => "ObjectEntry"
+    ArrayNode => "ArrayNode"
+    ArrayElement => "ArrayElement"
+    TableSection => "TableSection"
+    ArrayOfTablesSection => "ArrayOfTablesSection"
+    KeyValue => "KeyValue"
+    MappingNode => "MappingNode"
+    MappingEntry => "MappingEntry"
+    SequenceNode => "SequenceNode"
+    SequenceItem => "SequenceItem"
+    Attribute => "Attribute"
+    DelimiterGroup => "DelimiterGroup"
+    Punctuation => "Punctuation"
+    Keyword => "Keyword"
+    Identifier => "Identifier"
+    StringLiteral => "StringLiteral"
+    NumberLiteral => "NumberLiteral"
+    BoolLiteral => "BoolLiteral"
+    NullLiteral => "NullLiteral"
+    Operator => "Operator"
+    RawLine => "RawLine"
+    ConflictBlock => "ConflictBlock"
+    ErrorFragment => "ErrorFragment"
+  }
+}
+
+///|
+/// Integer tag for deterministic hashing of `SyntaxKind`.
+pub fn SyntaxKind::tag(self : SyntaxKind) -> UInt64 {
+  match self {
+    SourceFile => 1UL
+    ModuleBlock => 2UL
+    ImportGroup => 3UL
+    ImportItem => 4UL
+    FnDecl => 5UL
+    TestDecl => 6UL
+    StructDecl => 7UL
+    EnumDecl => 8UL
+    SuberrorDecl => 9UL
+    TraitDecl => 10UL
+    ImplDecl => 11UL
+    TypeDecl => 12UL
+    ConstDecl => 13UL
+    LetDecl => 14UL
+    ClassDecl => 15UL
+    InterfaceDecl => 16UL
+    FieldDecl => 17UL
+    VariantDecl => 18UL
+    ParamList => 19UL
+    Param => 20UL
+    Block => 21UL
+    Stmt => 22UL
+    Expr => 23UL
+    ObjectNode => 24UL
+    ObjectEntry => 25UL
+    ArrayNode => 26UL
+    ArrayElement => 27UL
+    TableSection => 28UL
+    ArrayOfTablesSection => 29UL
+    KeyValue => 30UL
+    MappingNode => 31UL
+    MappingEntry => 32UL
+    SequenceNode => 33UL
+    SequenceItem => 34UL
+    Attribute => 35UL
+    DelimiterGroup => 36UL
+    Punctuation => 37UL
+    Keyword => 38UL
+    Identifier => 39UL
+    StringLiteral => 40UL
+    NumberLiteral => 41UL
+    BoolLiteral => 42UL
+    NullLiteral => 43UL
+    Operator => 44UL
+    RawLine => 45UL
+    ConflictBlock => 46UL
+    ErrorFragment => 47UL
+  }
+}
+
+///|
+/// Whether a syntax kind represents a named/keyed declaration or container
+/// suitable for signature-guided matching.
+pub fn SyntaxKind::is_declaration_or_entry(self : SyntaxKind) -> Bool {
+  match self {
+    ImportItem
+    | FnDecl
+    | TestDecl
+    | StructDecl
+    | EnumDecl
+    | SuberrorDecl
+    | TraitDecl
+    | ImplDecl
+    | TypeDecl
+    | ConstDecl
+    | LetDecl
+    | ClassDecl
+    | InterfaceDecl
+    | FieldDecl
+    | VariantDecl
+    | ObjectEntry
+    | TableSection
+    | ArrayOfTablesSection
+    | KeyValue
+    | MappingEntry
+    | SequenceItem => true
+    _ => false
+  }
+}
+
