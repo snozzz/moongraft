@@ -320,3 +320,16 @@ fn concat_nodes(slice : ArrayView[@cst.CstNode]) -> String {
   buf.to_string()
 }
 
+///|
+fn are_keyed_sequence_items(slice : ArrayView[@cst.CstNode]) -> Bool {
+  if slice.is_empty() {
+    return false
+  }
+  for n in slice {
+    if n.signature == None {
+      return false
+    }
+  }
+  true
+}
+
