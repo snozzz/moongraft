@@ -669,3 +669,36 @@ fn extract_py_decl_name(trimmed : String) -> String {
   sc.scan_ident()
 }
 
+///|
+/// True if `'` at `sc.pos` starts a Rust lifetime (`'a`, `'static`, `'_`) rather than `'char'` or `'string'`.
+fn is_rust_lifetime_token(sc : Scanner) -> Bool {
+  match sc.peek(delta=1) {
+    Some(c1) =>
+      if is_ident_start(c1) {
+        let mut d = 2
+        while true {
+          match sc.peek(delta=d) {
+            Some(c) =>
+              if (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') ||
+                c == '_' {
+                d += 1
+              } else {
+                return c != '\''
+              }
+            None => return true
+          }
+        }
+        true
+      } else {
+        false
+      }
+    None => false
+  }
+}
+
+///|
+fn has_closing_single_quote_on_line(sc : Scanner) -> Bool {
+  !is_rust_lifetime_token(sc)
+}
