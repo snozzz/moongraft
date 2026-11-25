@@ -147,3 +147,223 @@ fn collect_named_decls(
   map
 }
 
+///|
+/// Detect high-confidence declaration renames (`Dice >= 65%`) between `base_cst` and `side_cst`.
+pub fn detect_branch_renames(
+  branch_name : String,
+  base_cst : @cst.CstNode,
+  side_cst : @cst.CstNode,
+) -> Array[SymbolRename] {
+  let b_decls = collect_named_decls(base_cst)
+  let s_decls = collect_named_decls(side_cst)
+
+  let removed : Array[(String, @cst.CstNode)] = []
+  b_decls.each(fn(sig, node) {
+    if !s_decls.contains(sig) {
+      removed.push((sig, node))
+    }
+  })
+
+  let added : Array[(String, @cst.CstNode)] = []
+  s_decls.each(fn(sig, node) {
+    if !b_decls.contains(sig) {
+      added.push((sig, node))
+    }
+  })
+
+  removed.sort_by(fn(a, b) { a.0.compare(b.0) })
+  added.sort_by(fn(a, b) { a.0.compare(b.0) })
+
+  let used_added = Array::make(added.length(), false)
+  let renames : Array[SymbolRename] = []
+
+  for rem in removed {
+    let (old_sig, old_node) = rem
+    let old_ident = bare_name_of_signature(old_sig)
+    let (old_bag, old_tot) = body_token_multiset(old_node, old_ident)
+    let mut best_idx = -1
+    let mut best_sim = 64 // Require >= 65% Dice similarity
+
+    for j = 0; j < added.length(); j = j + 1 {
+      if used_added[j] || added[j].1.kind != old_node.kind {
+        continue
+      }
+      let (new_sig, new_node) = added[j]
+      let new_ident = bare_name_of_signature(new_sig)
+      let (new_bag, new_tot) = body_token_multiset(new_node, new_ident)
+      let sim = dice_similarity_pct(old_bag, old_tot, new_bag, new_tot)
+      if sim > best_sim {
+        best_sim = sim
+        best_idx = j
+      }
+    }
+
+    if best_idx >= 0 {
+      used_added[best_idx] = true
+      let new_sig = added[best_idx].0
+      let new_ident = bare_name_of_signature(new_sig)
+      if old_ident != new_ident &&
+        !old_ident.is_empty() &&
+        !new_ident.is_empty() {
+        renames.push({
+          branch: branch_name,
+          syntax_kind: old_node.kind.label(),
+          old_signature: old_sig,
+          new_signature: new_sig,
+          old_identifier: old_ident,
+          new_identifier: new_ident,
+          similarity_pct: best_sim,
+        })
+      }
+    }
+  }
+  renames
+}
+
+///|
+/// Count standalone identifier occurrences of `ident` inside `source` (ignoring comments & strings).
+pub fn count_identifier_occurrences(source : String, ident : String) -> Int32 {
+  if ident.is_empty() {
+    return 0
+  }
+  let sc = @lang.Scanner::new(source)
+  let mut count = 0
+  while !sc.is_eof() {
+    let _ = sc.collect_c_like_trivia(allow_hash_comment=true)
+    if sc.is_eof() {
+      break
+    }
+    match sc.peek() {
+      Some('"') | Some('\'') => {
+        let _ = sc.scan_quoted_string(allow_multiline=true)
+      }
+      Some(ch) =>
+        if @lang.is_ident_start(ch) {
+          let w = sc.scan_ident()
+          if w == ident {
+            count += 1
+          }
+        } else {
+          sc.advance()
+        }
+      None => break
+    }
+  }
+  count
+}
+
+///|
+/// Rewrite standalone lexical occurrences of `old_ident` -> `new_ident` outside comments & string literals!
+pub fn rewrite_identifier_lossless(
+  source : String,
+  old_ident : String,
+  new_ident : String,
+) -> (String, Int32) {
+  if old_ident.is_empty() || old_ident == new_ident {
+    return (source, 0)
+  }
+  let sc = @lang.Scanner::new(source)
+  let out = StringBuilder()
+  let mut replaced = 0
+
+  while !sc.is_eof() {
+    let triv_start = sc.pos
+    let _ = sc.collect_c_like_trivia(allow_hash_comment=true)
+    if sc.pos > triv_start {
+      out.write_string(sc.slice_chars(triv_start, sc.pos))
+    }
+    if sc.is_eof() {
+      break
+    }
+    match sc.peek() {
+      Some('"') | Some('\'') => {
+        let (raw_lit, _, _) = sc.scan_quoted_string(allow_multiline=true)
+        out.write_string(raw_lit)
+      }
+      Some(ch) =>
+        if @lang.is_ident_start(ch) {
+          let w = sc.scan_ident()
+          if w == old_ident {
+            out.write_string(new_ident)
+            replaced += 1
+          } else {
+            out.write_string(w)
+          }
+        } else {
+          out.write_char(ch)
+          sc.advance()
+        }
+      None => break
+    }
+  }
+  (out.to_string(), replaced)
+}
+
+///|
+/// Analyze 3-way revisions `(base, left, right)` for cross-branch declaration renames
+/// and stale call-site semantic hazards!
+pub fn analyze_cross_branch_renames(
+  base_src : String,
+  left_src : String,
+  right_src : String,
+  lang : @cst.Language,
+) -> RefactorAnalysis {
+  let base_cst = @lang.parse_cst(base_src, lang)
+  let left_cst = @lang.parse_cst(left_src, lang)
+  let right_cst = @lang.parse_cst(right_src, lang)
+
+  let l_renames = detect_branch_renames("left", base_cst, left_cst)
+  let r_renames = detect_branch_renames("right", base_cst, right_cst)
+  let all_renames : Array[SymbolRename] = []
+  let hazards : Array[SemanticHazard] = []
+
+  for ren in l_renames {
+    all_renames.push(ren)
+    let base_cnt = count_identifier_occurrences(base_src, ren.old_identifier)
+    let right_cnt = count_identifier_occurrences(right_src, ren.old_identifier)
+    if right_cnt > base_cnt {
+      let added_refs = right_cnt - base_cnt
+      hazards.push({
+        rename: ren,
+        referencing_branch: "right",
+        stale_identifier: ren.old_identifier,
+        occurrence_count: added_refs,
+        suggestion: "Branch `left` renamed `" +
+        ren.old_identifier +
+        "` -> `" +
+        ren.new_identifier +
+        "`, while `right` added " +
+        added_refs.to_string() +
+        " new reference(s) to `" +
+        ren.old_identifier +
+        "`",
+      })
+    }
+  }
+
+  for ren in r_renames {
+    all_renames.push(ren)
+    let base_cnt = count_identifier_occurrences(base_src, ren.old_identifier)
+    let left_cnt = count_identifier_occurrences(left_src, ren.old_identifier)
+    if left_cnt > base_cnt {
+      let added_refs = left_cnt - base_cnt
+      hazards.push({
+        rename: ren,
+        referencing_branch: "left",
+        stale_identifier: ren.old_identifier,
+        occurrence_count: added_refs,
+        suggestion: "Branch `right` renamed `" +
+        ren.old_identifier +
+        "` -> `" +
+        ren.new_identifier +
+        "`, while `left` added " +
+        added_refs.to_string() +
+        " new reference(s) to `" +
+        ren.old_identifier +
+        "`",
+      })
+    }
+  }
+
+  { renames: all_renames, hazards, }
+}
