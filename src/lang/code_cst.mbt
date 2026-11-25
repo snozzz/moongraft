@@ -656,3 +656,16 @@ pub fn parse_python_cst(source : String) -> @cst.CstNode {
   reindexed
 }
 
+///|
+fn extract_py_decl_name(trimmed : String) -> String {
+  let sc = Scanner::new(trimmed)
+  let mut kw = sc.scan_ident()
+  if kw == "async" {
+    let _ = sc.consume_spaces()
+    kw = sc.scan_ident()
+  }
+  let _ = kw
+  let _ = sc.consume_spaces()
+  sc.scan_ident()
+}
+
