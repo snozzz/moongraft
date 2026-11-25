@@ -232,3 +232,439 @@ fn infer_entry_indent(
   "  "
 }
 
+///|
+/// Merge three `CommutativeByKey` or `CommutativeBlocks` CST containers (`base`, `left`, `right`),
+/// calling `recurse_node` for nested modified containers!
+pub fn merge_commutative_containers(
+  base : @cst.CstNode,
+  left : @cst.CstNode,
+  right : @cst.CstNode,
+  options : MergeOptions,
+  events : Array[ResolutionEvent],
+  recurse_node : (@cst.CstNode, @cst.CstNode, @cst.CstNode) -> (
+    @cst.CstNode,
+    Int32,
+  ),
+) -> (@cst.CstNode, Int32) {
+  let b_parts = split_container_parts(base)
+  let l_parts = split_container_parts(left)
+  let r_parts = split_container_parts(right)
+
+  let b_map : @hashmap.HashMap[String, @cst.CstNode] = @hashmap.HashMap([])
+  let l_map : @hashmap.HashMap[String, @cst.CstNode] = @hashmap.HashMap([])
+  let r_map : @hashmap.HashMap[String, @cst.CstNode] = @hashmap.HashMap([])
+  let b_keys : Array[String] = []
+  let l_keys : Array[String] = []
+  let r_keys : Array[String] = []
+
+  for i = 0; i < b_parts.items.length(); i = i + 1 {
+    let it = b_parts.items[i]
+    let k = item_merge_key(it, i)
+    if !b_map.contains(k) {
+      b_map.set(k, it)
+      b_keys.push(k)
+    }
+  }
+  for i = 0; i < l_parts.items.length(); i = i + 1 {
+    let it = l_parts.items[i]
+    let k = item_merge_key(it, i)
+    if !l_map.contains(k) {
+      l_map.set(k, it)
+      l_keys.push(k)
+    }
+  }
+  for i = 0; i < r_parts.items.length(); i = i + 1 {
+    let it = r_parts.items[i]
+    let k = item_merge_key(it, i)
+    if !r_map.contains(k) {
+      r_map.set(k, it)
+      r_keys.push(k)
+    }
+  }
+
+  let (merged_order, any_reordered) = weave_commutative_key_order(
+    b_keys, l_keys, r_keys,
+  )
+
+  let merged_items : Array[@cst.CstNode] = []
+  let mut total_conflicts = 0
+  let mut added_from_left = 0
+  let mut added_from_right = 0
+
+  for key in merged_order {
+    let b_opt = b_map.get(key)
+    let l_opt = l_map.get(key)
+    let r_opt = r_map.get(key)
+
+    match (b_opt, l_opt, r_opt) {
+      (Some(bn), Some(ln), Some(rn)) =>
+        if ln.exact_hash == rn.exact_hash {
+          merged_items.push(ln)
+        } else if bn.exact_hash == ln.exact_hash {
+          if any_reordered {
+            events.push({
+              kind: MoveAndEditComposed,
+              target: key,
+              detail: "Composed branch reordering with semantic edit on `" +
+              key +
+              "`",
+            })
+          }
+          merged_items.push(rn)
+        } else if bn.exact_hash == rn.exact_hash {
+          if any_reordered {
+            events.push({
+              kind: MoveAndEditComposed,
+              target: key,
+              detail: "Composed branch reordering with semantic edit on `" +
+              key +
+              "`",
+            })
+          }
+          merged_items.push(ln)
+        } else if bn.structural_hash == ln.structural_hash &&
+          bn.structural_hash != rn.structural_hash {
+          events.push({
+            kind: FormattingReconciled,
+            target: key,
+            detail: "Preserved Right semantic change over Left formatting-only change",
+          })
+          merged_items.push(rn)
+        } else if bn.structural_hash == rn.structural_hash &&
+          bn.structural_hash != ln.structural_hash {
+          events.push({
+            kind: FormattingReconciled,
+            target: key,
+            detail: "Preserved Left semantic change over Right formatting-only change",
+          })
+          merged_items.push(ln)
+        } else if ln.structural_hash == rn.structural_hash {
+          events.push({
+            kind: FormattingReconciled,
+            target: key,
+            detail: "Collapsed structurally equivalent edits on `" + key + "`",
+          })
+          merged_items.push(ln)
+        } else {
+          // Both branches modified semantics of `key` -> recurse into `key`'s CST!
+          let (sub_merged, sub_conflicts) = recurse_node(bn, ln, rn)
+          if sub_conflicts == 0 {
+            events.push({
+              kind: RecursiveContainerMerge,
+              target: key,
+              detail: "Merged concurrent inner edits inside `" + key + "`",
+            })
+          }
+          total_conflicts += sub_conflicts
+          merged_items.push(sub_merged)
+        }
+      (Some(bn), None, Some(rn)) =>
+        if bn.structural_hash == rn.structural_hash {
+          // Clean deletion by Left
+          ()
+        } else {
+          events.push({
+            kind: DeleteModifyConflict,
+            target: key,
+            detail: "Left deleted `" + key + "` while Right modified it",
+          })
+          let (cnode, cc) = make_conflict_node(
+            bn.unparse(),
+            "",
+            rn.unparse(),
+            options,
+          )
+          total_conflicts += cc
+          merged_items.push(cnode)
+        }
+      (Some(bn), Some(ln), None) =>
+        if bn.structural_hash == ln.structural_hash {
+          // Clean deletion by Right
+          ()
+        } else {
+          events.push({
+            kind: DeleteModifyConflict,
+            target: key,
+            detail: "Right deleted `" + key + "` while Left modified it",
+          })
+          let (cnode, cc) = make_conflict_node(
+            bn.unparse(),
+            ln.unparse(),
+            "",
+            options,
+          )
+          total_conflicts += cc
+          merged_items.push(cnode)
+        }
+      (Some(_), None, None) => () // Both deleted `key`
+      (None, Some(ln), None) => {
+        added_from_left += 1
+        merged_items.push(ln)
+      }
+      (None, None, Some(rn)) => {
+        added_from_right += 1
+        merged_items.push(rn)
+      }
+      (None, Some(ln), Some(rn)) =>
+        // Both branches independently added `key` (`Add-Add`)!
+        if ln.structural_hash == rn.structural_hash {
+          events.push({
+            kind: DuplicateDeduped,
+            target: key,
+            detail: "Deduplicated identical concurrent addition of `" +
+            key +
+            "`",
+          })
+          merged_items.push(ln)
+        } else if !ln.is_leaf() && !rn.is_leaf() && ln.kind == rn.kind {
+          // E.g. both branches added `[dev-dependencies]` or `"scripts": { ... }` with disjoint inner keys!
+          let empty_base = make_synthetic_empty_partner(ln)
+          let (sub_node, sub_c) = recurse_node(empty_base, ln, rn)
+          if sub_c == 0 {
+            events.push({
+              kind: RecursiveContainerMerge,
+              target: key,
+              detail: "Merged two newly added containers sharing key `" +
+              key +
+              "`",
+            })
+          }
+          total_conflicts += sub_c
+          merged_items.push(sub_node)
+        } else {
+          events.push({
+            kind: ConflictLocalized,
+            target: key,
+            detail: "Conflicting concurrent additions for `" + key + "`",
+          })
+          let (cnode, cc) = make_conflict_node(
+            "",
+            ln.unparse(),
+            rn.unparse(),
+            options,
+          )
+          total_conflicts += cc
+          merged_items.push(cnode)
+        }
+      (None, None, None) => ()
+    }
+  }
+
+  if added_from_left > 0 && added_from_right > 0 && total_conflicts == 0 {
+    let ev_kind = if left.ordering == @cst.CommutativeBlocks {
+      ParallelBlockWeave
+    } else {
+      CommutativeKeyWeave
+    }
+    events.push({
+      kind: ev_kind,
+      target: left.signature.unwrap_or(left.kind.label()),
+      detail: "Wove " +
+      added_from_left.to_string() +
+      " Left addition(s) and " +
+      added_from_right.to_string() +
+      " Right addition(s) without conflict",
+    })
+  }
+
+  // Merge container header if present (`[table]`, `class Foo`)
+  let merged_header : @cst.CstNode? = match
+    (b_parts.header_node, l_parts.header_node, r_parts.header_node) {
+    (Some(bh), Some(lh), Some(rh)) =>
+      if lh.exact_hash == rh.exact_hash || bh.exact_hash == rh.exact_hash {
+        Some(lh)
+      } else if bh.exact_hash == lh.exact_hash {
+        Some(rh)
+      } else {
+        let (hm, hc) = recurse_node(bh, lh, rh)
+        total_conflicts += hc
+        Some(hm)
+      }
+    (_, Some(lh), _) => Some(lh)
+    (_, _, Some(rh)) => Some(rh)
+    _ => None
+  }
+
+  let chosen_lead = if base.leading_trivia == left.leading_trivia {
+    right.leading_trivia
+  } else {
+    left.leading_trivia
+  }
+  let chosen_trail = if base.trailing_trivia == left.trailing_trivia {
+    right.trailing_trivia
+  } else {
+    left.trailing_trivia
+  }
+
+  // Reassemble delimited `{ ... }` vs headered vs top-level container
+  match (l_parts.open_punct, l_parts.close_punct) {
+    (Some(open_p), Some(close_p)) => {
+      let raw_preview = left.unparse() + right.unparse()
+      let is_multiline = raw_preview.contains("\n")
+      let indent = infer_entry_indent(
+        b_parts.items,
+        l_parts.items,
+        r_parts.items,
+      )
+      let want_trailing_comma = (
+          l_parts.had_trailing_comma || r_parts.had_trailing_comma
+        ) &&
+        options.language != @cst.Json
+      let uses_commas = left.kind == @cst.ObjectNode ||
+        left.kind == @cst.ImportGroup
+      if uses_commas {
+        let assembled = reassemble_delimited_entries(
+          open_p,
+          merged_items,
+          close_p,
+          left.kind,
+          left.ordering,
+          left.signature,
+          chosen_lead,
+          chosen_trail,
+          want_trailing_comma,
+          indent,
+          is_multiline,
+          events,
+        )
+        (assembled, total_conflicts)
+      } else {
+        // Brace block without commas (`struct` fields, `enum` variants, TS `class` members)
+        let out_children : Array[@cst.CstNode] = [open_p]
+        for i = 0; i < merged_items.length(); i = i + 1 {
+          let mut it = merged_items[i]
+          if is_multiline &&
+            !@cst.render_trivia(it.leading_trivia).contains("\n") &&
+            !@cst.render_trivia(
+              out_children[out_children.length() - 1].trailing_trivia,
+            ).contains("\n") {
+            let nl_lead = [@cst.Trivia::newline(), @cst.Trivia::spaces(indent)]
+            it = it.with_trivia(leading_trivia=nl_lead)
+          }
+          if is_multiline &&
+            it.kind != @cst.ConflictBlock &&
+            !it.unparse().has_suffix("\n") {
+            let tr = it.trailing_trivia.copy()
+            tr.push(@cst.Trivia::newline())
+            it = it.with_trivia(trailing_trivia=tr)
+          }
+          out_children.push(it)
+        }
+        out_children.push(close_p)
+        (
+          @cst.CstNode::interior(
+            id=0,
+            left.kind,
+            out_children,
+            ordering=left.ordering,
+            signature=left.signature,
+            leading_trivia=chosen_lead,
+            trailing_trivia=chosen_trail,
+          ),
+          total_conflicts,
+        )
+      }
+    }
+    _ => {
+      let final_children : Array[@cst.CstNode] = []
+      match merged_header {
+        Some(h) => final_children.push(h)
+        None => ()
+      }
+      let uses_mbt_sep = options.language == @cst.MoonBit &&
+        left.kind == @cst.SourceFile &&
+        (
+          left.unparse().contains("///|") ||
+          right.unparse().contains("///|") ||
+          base.unparse().contains("///|")
+        )
+      let normalized_items = normalize_moonbit_block_separators(
+        merged_items, uses_mbt_sep,
+      )
+      for i = 0; i < normalized_items.length(); i = i + 1 {
+        let mut it = normalized_items[i]
+        // Ensure newline separation between consecutive line-based entries (`ImportItem`, `KeyValue`, `MappingEntry`, `FnDecl`)
+        if !final_children.is_empty() {
+          let prev_str = final_children[final_children.length() - 1].unparse()
+          let cur_lead = @cst.render_trivia(it.leading_trivia)
+          if !prev_str.has_suffix("\n") && !cur_lead.has_prefix("\n") {
+            let lead_with_nl : Array[@cst.Trivia] = [@cst.Trivia::newline()]
+            for t in it.leading_trivia {
+              lead_with_nl.push(t)
+            }
+            it = it.with_trivia(leading_trivia=lead_with_nl)
+          }
+        }
+        final_children.push(it)
+      }
+      (
+        @cst.CstNode::interior(
+          id=0,
+          left.kind,
+          final_children,
+          ordering=left.ordering,
+          signature=left.signature,
+          leading_trivia=chosen_lead,
+          trailing_trivia=chosen_trail,
+        ),
+        total_conflicts,
+      )
+    }
+  }
+}
+
+///|
+/// Create a minimal empty base node matching `template`'s structure when both branches
+/// independently add a container with the same key (`"scripts": { ... }` or `[dev-dependencies]`).
+fn make_synthetic_empty_partner(template : @cst.CstNode) -> @cst.CstNode {
+  if template.kind == @cst.ObjectEntry && template.children.length() == 3 {
+    let val = template.children[2]
+    if val.kind == @cst.ObjectNode {
+      let empty_obj = @cst.CstNode::interior(
+        id=0,
+        @cst.ObjectNode,
+        [
+          @cst.CstNode::leaf(id=1, @cst.Punctuation, "{"),
+          @cst.CstNode::leaf(id=2, @cst.Punctuation, "}"),
+        ],
+        ordering=@cst.CommutativeByKey,
+      )
+      return @cst.CstNode::interior(
+        id=0,
+        @cst.ObjectEntry,
+        [template.children[0], template.children[1], empty_obj],
+        signature=template.signature,
+      )
+    }
+  }
+  if template.kind == @cst.MappingEntry && template.children.length() >= 2 {
+    let empty_map = @cst.CstNode::interior(
+      id=0,
+      @cst.MappingNode,
+      [],
+      ordering=@cst.CommutativeByKey,
+    )
+    return @cst.CstNode::interior(
+      id=0,
+      @cst.MappingEntry,
+      [template.children[0], empty_map],
+      signature=template.signature,
+    )
+  }
+  if template.kind == @cst.TableSection && !template.children.is_empty() {
+    return @cst.CstNode::interior(
+      id=0,
+      @cst.TableSection,
+      [template.children[0]],
+      ordering=@cst.CommutativeByKey,
+      signature=template.signature,
+    )
+  }
+  @cst.CstNode::interior(
+    id=0,
+    template.kind,
+    [],
+    ordering=template.ordering,
+    signature=template.signature,
+  )
+}
