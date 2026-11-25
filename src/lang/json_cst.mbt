@@ -161,3 +161,30 @@ fn parse_json_value(
   }
 }
 
+///|
+fn consume_json_error_atom(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  start_off : Int32,
+) -> @cst.CstNode {
+  let s = sc.pos
+  while !sc.is_eof() {
+    match sc.peek() {
+      Some(',') | Some('}') | Some(']') | Some('\n') | Some('\r') => break
+      _ => sc.advance()
+    }
+  }
+  if sc.pos == s && !sc.is_eof() {
+    sc.advance()
+  }
+  @cst.CstNode::leaf(
+    id=ids.alloc(),
+    @cst.ErrorFragment,
+    sc.slice_chars(s, sc.pos),
+    leading_trivia=leading,
+    span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+    has_error=true,
+  )
+}
+
