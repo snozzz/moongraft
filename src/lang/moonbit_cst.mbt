@@ -348,3 +348,195 @@ pub fn parse_brace_statement_block(
   )
 }
 
+///|
+fn parse_mbt_fn_or_impl(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  decl_start : Int32,
+  kind : @cst.SyntaxKind,
+  prefix_tag : String,
+) -> @cst.CstNode {
+  let name = if kind == @cst.FnDecl {
+    scan_mbt_qualified_name(sc)
+  } else {
+    let impl_hdr_start = sc.pos
+    let _ = advance_to_decl_open_brace(sc)
+    let raw_hdr = sc.slice_chars(impl_hdr_start, sc.pos).trim().to_owned()
+    sc.pos = impl_hdr_start
+    raw_hdr.replace_all(old=" ", new="")
+  }
+  let has_brace = advance_to_decl_open_brace(sc)
+  if has_brace && sc.peek() == Some('{') {
+    let sig_raw = sc.slice_chars(decl_start, sc.pos)
+    let header_leaf = @cst.CstNode::leaf(id=ids.alloc(), @cst.Keyword, sig_raw)
+    let body_block = parse_brace_statement_block(sc, ids)
+    let sig = if !name.is_empty() {
+      Some(prefix_tag + ":" + name)
+    } else {
+      None
+    }
+    @cst.CstNode::interior(
+      id=ids.alloc(),
+      kind,
+      [header_leaf, body_block],
+      signature=sig,
+      leading_trivia=leading,
+      span=@cst.ByteSpan::new(sc.offsets[decl_start], sc.byte_offset()),
+      has_error=body_block.has_error,
+    )
+  } else {
+    // Extern `#|` body or `.mbti` signature without `{ ... }`
+    while !sc.is_eof() && !sc.starts_with("///|") {
+      let line_s = sc.pos
+      let _ = sc.consume_to_eol(include_newline=true)
+      let l_txt = sc.slice_chars(line_s, sc.pos).trim().to_owned()
+      let _ = sc.consume_spaces()
+      if !sc.starts_with("#|") && !l_txt.has_suffix("=") {
+        break
+      }
+    }
+    let raw = sc.slice_chars(decl_start, sc.pos)
+    let sig = if !name.is_empty() {
+      Some(prefix_tag + ":" + name)
+    } else {
+      None
+    }
+    @cst.CstNode::leaf(
+      id=ids.alloc(),
+      kind,
+      raw,
+      signature=sig,
+      leading_trivia=leading,
+      span=@cst.ByteSpan::new(sc.offsets[decl_start], sc.byte_offset()),
+    )
+  }
+}
+
+///|
+fn parse_mbt_test_decl(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  decl_start : Int32,
+  anon_idx : Int32,
+) -> (@cst.CstNode, Int32) {
+  let _ = sc.consume_spaces()
+  let mut next_anon = anon_idx
+  let sig = if sc.peek() == Some('"') {
+    let (_, test_name, _) = sc.scan_quoted_string()
+    "test:" + test_name
+  } else {
+    let s = "anon:test#" + next_anon.to_string()
+    next_anon += 1
+    s
+  }
+  let has_brace = advance_to_decl_open_brace(sc)
+  if has_brace && sc.peek() == Some('{') {
+    let hdr = sc.slice_chars(decl_start, sc.pos)
+    let hdr_leaf = @cst.CstNode::leaf(id=ids.alloc(), @cst.Keyword, hdr)
+    let body = parse_brace_statement_block(sc, ids)
+    (
+      @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.TestDecl,
+        [hdr_leaf, body],
+        signature=Some(sig),
+        leading_trivia=leading,
+        span=@cst.ByteSpan::new(sc.offsets[decl_start], sc.byte_offset()),
+        has_error=body.has_error,
+      ),
+      next_anon,
+    )
+  } else {
+    let _ = sc.consume_to_eol(include_newline=true)
+    let raw = sc.slice_chars(decl_start, sc.pos)
+    (
+      @cst.CstNode::leaf(
+        id=ids.alloc(),
+        @cst.TestDecl,
+        raw,
+        signature=Some(sig),
+        leading_trivia=leading,
+      ),
+      next_anon,
+    )
+  }
+}
+
+///|
+fn parse_mbt_record_or_adt(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  decl_start : Int32,
+  kind : @cst.SyntaxKind,
+  prefix_tag : String,
+  member_kind : @cst.SyntaxKind,
+) -> @cst.CstNode {
+  let name = scan_mbt_qualified_name(sc)
+  let has_brace = advance_to_decl_open_brace(sc)
+  if has_brace && sc.peek() == Some('{') {
+    let hdr = sc.slice_chars(decl_start, sc.pos)
+    let hdr_leaf = @cst.CstNode::leaf(id=ids.alloc(), @cst.Keyword, hdr)
+    let members_block = parse_mbt_member_block(sc, ids, member_kind)
+    // Optional trailing `derive(...)` on same line if legacy style exists
+    let after_pos = sc.pos
+    let _ = sc.consume_spaces()
+    if sc.starts_with("derive") {
+      sc.advance(count=6)
+      if sc.peek() == Some('(') {
+        let _ = sc.skip_balanced_group()
+      }
+      let trail = sc.collect_trailing_line_trivia(allow_slash_comment=true)
+      let derive_leaf = @cst.CstNode::leaf(
+        id=ids.alloc(),
+        @cst.Attribute,
+        sc.slice_chars(after_pos, sc.pos - @cst.render_trivia(trail).length()),
+        trailing_trivia=trail,
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        kind,
+        [hdr_leaf, members_block, derive_leaf],
+        signature=if !name.is_empty() {
+          Some(prefix_tag + ":" + name)
+        } else {
+          None
+        },
+        leading_trivia=leading,
+        has_error=members_block.has_error,
+      )
+    } else {
+      sc.pos = after_pos
+    }
+    @cst.CstNode::interior(
+      id=ids.alloc(),
+      kind,
+      [hdr_leaf, members_block],
+      signature=if !name.is_empty() {
+        Some(prefix_tag + ":" + name)
+      } else {
+        None
+      },
+      leading_trivia=leading,
+      span=@cst.ByteSpan::new(sc.offsets[decl_start], sc.byte_offset()),
+      has_error=members_block.has_error,
+    )
+  } else {
+    let _ = sc.consume_to_eol(include_newline=true)
+    let raw = sc.slice_chars(decl_start, sc.pos)
+    @cst.CstNode::leaf(
+      id=ids.alloc(),
+      kind,
+      raw,
+      signature=if !name.is_empty() {
+        Some(prefix_tag + ":" + name)
+      } else {
+        None
+      },
+      leading_trivia=leading,
+    )
+  }
+}
+
