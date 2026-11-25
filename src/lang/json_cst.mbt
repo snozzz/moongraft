@@ -188,3 +188,181 @@ fn consume_json_error_atom(
   )
 }
 
+///|
+fn parse_json_object(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+) -> @cst.CstNode {
+  let start_off = sc.byte_offset()
+  sc.advance() // '{'
+  let children : Array[@cst.CstNode] = [
+    @cst.CstNode::leaf(
+      id=ids.alloc(),
+      @cst.Punctuation,
+      "{",
+      span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+    ),
+  ]
+  let mut has_err = false
+  let mut expecting_entry_after_comma = false
+
+  while !sc.is_eof() {
+    let triv = sc.collect_c_like_trivia()
+    match sc.peek() {
+      Some('}') => {
+        let close_off = sc.byte_offset()
+        sc.advance()
+        children.push(
+          @cst.CstNode::leaf(
+            id=ids.alloc(),
+            @cst.Punctuation,
+            "}",
+            leading_trivia=triv,
+            span=@cst.ByteSpan::new(close_off, sc.byte_offset()),
+          ),
+        )
+        return @cst.CstNode::interior(
+          id=ids.alloc(),
+          @cst.ObjectNode,
+          children,
+          ordering=@cst.CommutativeByKey,
+          leading_trivia=leading,
+          span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+          has_error=has_err,
+        )
+      }
+      Some('"') => {
+        expecting_entry_after_comma = false
+        let entry_start = sc.byte_offset()
+        let (key_raw, key_unescaped, key_closed) = sc.scan_quoted_string()
+        let key_node = @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.StringLiteral,
+          key_raw,
+          span=@cst.ByteSpan::new(entry_start, sc.byte_offset()),
+          has_error=!key_closed,
+        )
+        if !key_closed {
+          has_err = true
+        }
+        let colon_lead = sc.collect_c_like_trivia()
+        let entry_parts : Array[@cst.CstNode] = [key_node]
+        if sc.peek() == Some(':') {
+          let c_off = sc.byte_offset()
+          sc.advance()
+          entry_parts.push(
+            @cst.CstNode::leaf(
+              id=ids.alloc(),
+              @cst.Punctuation,
+              ":",
+              leading_trivia=colon_lead,
+              span=@cst.ByteSpan::new(c_off, sc.byte_offset()),
+            ),
+          )
+          let val_lead = sc.collect_c_like_trivia()
+          let val_node = parse_json_value(sc, ids, val_lead)
+          if val_node.has_error {
+            has_err = true
+          }
+          entry_parts.push(val_node)
+        } else {
+          has_err = true
+          entry_parts.push(
+            @cst.CstNode::leaf(
+              id=ids.alloc(),
+              @cst.ErrorFragment,
+              "",
+              leading_trivia=colon_lead,
+              has_error=true,
+            ),
+          )
+        }
+        let entry_node = @cst.CstNode::interior(
+          id=ids.alloc(),
+          @cst.ObjectEntry,
+          entry_parts,
+          signature=Some("key:" + key_unescaped),
+          leading_trivia=triv,
+          span=@cst.ByteSpan::new(entry_start, sc.byte_offset()),
+          has_error=has_err,
+        )
+        children.push(entry_node)
+
+        // Optional comma separator before next entry
+        let after_entry_triv = sc.collect_c_like_trivia()
+        if sc.peek() == Some(',') {
+          let comma_off = sc.byte_offset()
+          sc.advance()
+          let comma_trail = sc.collect_trailing_line_trivia(
+            allow_slash_comment=true,
+          )
+          children.push(
+            @cst.CstNode::leaf(
+              id=ids.alloc(),
+              @cst.Punctuation,
+              ",",
+              leading_trivia=after_entry_triv,
+              trailing_trivia=comma_trail,
+              span=@cst.ByteSpan::new(comma_off, sc.byte_offset()),
+            ),
+          )
+          expecting_entry_after_comma = true
+        } else if sc.peek() == Some('}') {
+          let close_off = sc.byte_offset()
+          sc.advance()
+          children.push(
+            @cst.CstNode::leaf(
+              id=ids.alloc(),
+              @cst.Punctuation,
+              "}",
+              leading_trivia=after_entry_triv,
+              span=@cst.ByteSpan::new(close_off, sc.byte_offset()),
+            ),
+          )
+          return @cst.CstNode::interior(
+            id=ids.alloc(),
+            @cst.ObjectNode,
+            children,
+            ordering=@cst.CommutativeByKey,
+            leading_trivia=leading,
+            span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+            has_error=has_err,
+          )
+        } else {
+          // Missing comma between two entries: syntax error!
+          has_err = true
+          if !after_entry_triv.is_empty() {
+            children.push(
+              @cst.CstNode::leaf(
+                id=ids.alloc(),
+                @cst.ErrorFragment,
+                "",
+                leading_trivia=after_entry_triv,
+                has_error=true,
+              ),
+            )
+          }
+        }
+      }
+      _ => {
+        has_err = true
+        let _ = expecting_entry_after_comma
+        let bad = consume_json_error_atom(sc, ids, triv, sc.byte_offset())
+        children.push(bad)
+      }
+    }
+  }
+
+  // Unclosed '{'
+  @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.ObjectNode,
+    children,
+    ordering=@cst.CommutativeByKey,
+    leading_trivia=leading,
+    span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+    has_error=true,
+  )
+}
+
