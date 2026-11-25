@@ -1,0 +1,66 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/report"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "snozzz/moongraft/src/cst",
+  "snozzz/moongraft/src/matcher",
+}
+
+// Values
+pub fn builtin_benchmark_corpus() -> Array[BenchmarkCase]
+
+pub fn generate_gitattributes_snippet() -> String
+
+pub fn generate_gitconfig_snippet() -> String
+
+pub fn render_structural_diff(String, String, @cst.Language, Array[@matcher.StructuralEdit]) -> String
+
+pub fn render_suite_markdown(SuiteSummary) -> String
+
+pub fn run_benchmark_suite() -> SuiteSummary
+
+// Errors
+
+// Types and methods
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct BenchmarkCase {
+  id : String
+  title : String
+  path : String
+  language : @cst.Language
+  expect_clean : Bool
+  base : String
+  left : String
+  right : String
+  must_contain : Array[String]
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct CaseOutcome {
+  id : String
+  title : String
+  language : String
+  expect_clean : Bool
+  diff3_conflicts : Int32
+  moongraft_conflicts : Int32
+  syntax_valid : Bool
+  passed_expectation : Bool
+}
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct SuiteSummary {
+  total_cases : Int32
+  expected_clean_cases : Int32
+  expected_conflict_cases : Int32
+  diff3_clean_on_resolvable : Int32
+  moongraft_clean_on_resolvable : Int32
+  true_conflicts_preserved : Int32
+  all_assertions_passed : Bool
+  outcomes : Array[CaseOutcome]
+}
+
+// Type aliases
+
+// Traits
