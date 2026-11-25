@@ -84,3 +84,137 @@ pub fn parse_cst(source : String, lang : @cst.Language) -> @cst.CstNode {
   tree
 }
 
+///|
+fn parse_plaintext_cst(source : String) -> @cst.CstNode {
+  let sc = Scanner::new(source)
+  let ids = IdGen::new()
+  let lines : Array[@cst.CstNode] = []
+  while !sc.is_eof() {
+    let line = sc.consume_to_eol(include_newline=true)
+    lines.push(@cst.CstNode::leaf(id=ids.alloc(), @cst.RawLine, line))
+  }
+  let root = @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.SourceFile,
+    lines,
+    ordering=@cst.Sequential,
+    span=@cst.ByteSpan::new(0, source.length()),
+  )
+  let (reindexed, _) = @cst.reindex_tree(root)
+  reindexed
+}
+
+///|
+/// Structural & lexical soundness check used by the post-merge safety gate.
+/// Checks:
+/// 1. `tree.has_error == false` (no unclosed strings, malformed JSON/TOML entries, etc.)
+/// 2. Globally balanced braces/brackets/parens outside string literals & comments
+/// 3. Zero duplicate keys/signatures in `CommutativeByKey` / `CommutativeBlocks` containers.
+pub fn verify_well_formed(
+  source : String,
+  lang : @cst.Language,
+) -> (Bool, Array[String]) {
+  let issues : Array[String] = []
+  let tree = parse_cst(source, lang)
+  if tree.has_error {
+    issues.push("CST parser reported syntax error fragment")
+  }
+  if !check_global_delimiters_balanced(source, lang) {
+    issues.push("Unbalanced delimiters or unclosed string literal")
+  }
+  let dups = @cst.find_duplicate_signatures(tree)
+  for d in dups {
+    issues.push("Duplicate semantic key/declaration: " + d)
+  }
+  (issues.is_empty(), issues)
+}
+
+///|
+fn check_global_delimiters_balanced(
+  source : String,
+  lang : @cst.Language,
+) -> Bool {
+  let sc = Scanner::new(source)
+  let allow_hash = lang == @cst.Toml || lang == @cst.Yaml || lang == @cst.Python
+  let stack : Array[Char] = []
+  while !sc.is_eof() {
+    let ch = sc.peek().unwrap()
+    if ch == '"' || (ch == '\'' && lang != @cst.Rust && lang != @cst.MoonBit) {
+      if sc.starts_with("\"\"\"") || sc.starts_with("'''") {
+        let delim = sc.slice_chars(sc.pos, sc.pos + 3)
+        sc.advance(count=3)
+        let mut closed = false
+        while !sc.is_eof() {
+          if sc.starts_with(delim) {
+            sc.advance(count=3)
+            closed = true
+            break
+          }
+          if sc.peek() == Some('\\') {
+            sc.advance(count=2)
+          } else {
+            sc.advance()
+          }
+        }
+        if !closed {
+          return false
+        }
+      } else {
+        let (_, _, ok) = sc.scan_quoted_string(
+          allow_multiline=lang != @cst.Json,
+        )
+        if !ok {
+          return false
+        }
+      }
+    } else if ch == '\'' && (lang == @cst.MoonBit || lang == @cst.Rust) {
+      // In MoonBit/Rust, `'a'` is char literal while `'lifetime` (Rust) has no closing quote!
+      if lang == @cst.MoonBit {
+        let (_, _, ok) = sc.scan_quoted_string()
+        if !ok {
+          return false
+        }
+      } else {
+        sc.advance()
+      }
+    } else if sc.starts_with("#|") {
+      let _ = sc.consume_to_eol(include_newline=true)
+    } else if !allow_hash && sc.starts_with("//") {
+      let _ = sc.consume_to_eol(include_newline=true)
+    } else if allow_hash && ch == '#' {
+      let _ = sc.consume_to_eol(include_newline=true)
+    } else if !allow_hash && sc.starts_with("/*") {
+      sc.advance(count=2)
+      let mut closed = false
+      while !sc.is_eof() {
+        if sc.starts_with("*/") {
+          sc.advance(count=2)
+          closed = true
+          break
+        }
+        sc.advance()
+      }
+      if !closed {
+        return false
+      }
+    } else if ch == '{' {
+      stack.push('}')
+      sc.advance()
+    } else if ch == '(' {
+      stack.push(')')
+      sc.advance()
+    } else if ch == '[' {
+      stack.push(']')
+      sc.advance()
+    } else if ch == '}' || ch == ')' || ch == ']' {
+      if stack.is_empty() || stack[stack.length() - 1] != ch {
+        return false
+      }
+      let _ = stack.pop()
+      sc.advance()
+    } else {
+      sc.advance()
+    }
+  }
+  stack.is_empty()
+}
