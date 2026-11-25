@@ -1,0 +1,38 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft"
+
+import {
+  "snozzz/moongraft/src/cst",
+  "snozzz/moongraft/src/diff3",
+  "snozzz/moongraft/src/matcher",
+  "snozzz/moongraft/src/merger",
+  "snozzz/moongraft/src/refactor",
+  "snozzz/moongraft/src/report",
+  "snozzz/moongraft/src/solver",
+  "snozzz/moongraft/src/workspace",
+}
+
+// Values
+pub fn analyze_renames(String, String, String, path? : StringView, language? : @cst.Language?) -> @refactor.RefactorAnalysis
+
+pub fn evaluate_corpus() -> @report.SuiteSummary
+
+pub fn inspect_cst_sexp(String, path? : StringView, language? : @cst.Language?) -> String
+
+pub fn merge(String, String, String, path? : StringView, language? : @cst.Language?, style? : @diff3.ConflictStyle, labels? : @diff3.MergeLabels) -> @merger.MergeResult
+
+pub fn playground_merge_json(String, String, String, String, String) -> String
+
+pub fn reconcile_workspaces(Map[String, String], Array[Map[String, String]], propagate_renames? : Bool) -> @workspace.WorkspaceMergePlan
+
+pub fn solve_conflicts(String, path? : StringView, language? : @cst.Language?, style? : @diff3.ConflictStyle) -> @solver.SolveResult
+
+pub fn structural_diff(String, String, path? : StringView, language? : @cst.Language?) -> Array[@matcher.StructuralEdit]
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
