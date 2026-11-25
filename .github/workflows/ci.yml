@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install MoonBit toolchain
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Node.js and Python
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check formatting and types
+        run: |
+          moon version --all
+          moon check
+          moon fmt --check
+
+      - name: Run unit, property, and doc tests
+        run: moon test
+
+      - name: Build multi-target release artifacts (wasm-gc, js, native)
+        run: |
+          moon build --target wasm-gc --release
+          moon build --target js --release
+          moon build --target native --release
+
+      - name: Run CLI benchmark suite and differential compiler-in-the-loop harness
+        run: |
+          ./scripts/moongraft-cli.sh bench-suite
+          python3 scripts/verify_harness.py
