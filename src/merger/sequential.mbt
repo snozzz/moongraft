@@ -333,3 +333,160 @@ fn are_keyed_sequence_items(slice : ArrayView[@cst.CstNode]) -> Bool {
   true
 }
 
+///|
+fn disjoint_signatures(
+  a : ArrayView[@cst.CstNode],
+  b : ArrayView[@cst.CstNode],
+) -> Bool {
+  let seen : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+  for n in a {
+    match n.signature {
+      Some(s) => seen.set(s, true)
+      None => return false
+    }
+  }
+  for n in b {
+    match n.signature {
+      Some(s) => if seen.contains(s) { return false }
+      None => return false
+    }
+  }
+  true
+}
+
+///|
+/// Merge JSON `ArrayNode` (`[ e1, e2, ... ]`):
+/// - If elements carry distinct `"elem:..."` signatures (`id`/`name`), weaves keyed objects!
+/// - Otherwise aligns sequential elements and normalizes commas cleanly!
+fn merge_json_array_nodes(
+  base : @cst.CstNode,
+  left : @cst.CstNode,
+  right : @cst.CstNode,
+  options : MergeOptions,
+  events : Array[ResolutionEvent],
+  recurse_node : (@cst.CstNode, @cst.CstNode, @cst.CstNode) -> (
+    @cst.CstNode,
+    Int32,
+  ),
+) -> (@cst.CstNode, Int32) {
+  fn extract_array_elems(
+    arr : @cst.CstNode,
+  ) -> (@cst.CstNode, Array[@cst.CstNode], @cst.CstNode) {
+    let cs = arr.children
+    let open_b = cs[0]
+    let close_b = cs[cs.length() - 1]
+    let elems : Array[@cst.CstNode] = []
+    for i = 1; i < cs.length() - 1; i = i + 1 {
+      if cs[i].kind != @cst.Punctuation {
+        elems.push(cs[i])
+      }
+    }
+    (open_b, elems, close_b)
+  }
+
+  if base.children.length() < 2 ||
+    left.children.length() < 2 ||
+    right.children.length() < 2 {
+    let d3 = @diff3.merge_lines_diff3(
+      base.unparse(),
+      left.unparse(),
+      right.unparse(),
+      style=options.style,
+      labels=options.labels,
+    )
+    return (
+      @cst.CstNode::leaf(
+        id=0,
+        if d3.conflict_count > 0 {
+          @cst.ConflictBlock
+        } else {
+          @cst.ArrayNode
+        },
+        d3.text,
+        has_error=d3.conflict_count > 0,
+      ),
+      d3.conflict_count,
+    )
+  }
+
+  let (_, b_elems, _) = extract_array_elems(base)
+  let (l_open, l_elems, l_close) = extract_array_elems(left)
+  let (_, r_elems, _) = extract_array_elems(right)
+
+  let all_keyed = (
+      !l_elems.is_empty() &&
+      !r_elems.is_empty() &&
+      are_keyed_sequence_items(b_elems[:])
+    ) ||
+    (
+      b_elems.is_empty() &&
+      are_keyed_sequence_items(l_elems[:]) &&
+      are_keyed_sequence_items(r_elems[:])
+    )
+  if all_keyed &&
+    are_keyed_sequence_items(l_elems[:]) &&
+    are_keyed_sequence_items(r_elems[:]) {
+    // Delegate keyed object arrays (`[{ "id": "a", ... }]`) to commutative weaver!
+    let b_as_obj = @cst.CstNode::interior(
+      id=0,
+      @cst.ObjectNode,
+      base.children,
+      ordering=@cst.CommutativeByKey,
+      leading_trivia=base.leading_trivia,
+      trailing_trivia=base.trailing_trivia,
+    )
+    let l_as_obj = @cst.CstNode::interior(
+      id=0,
+      @cst.ObjectNode,
+      left.children,
+      ordering=@cst.CommutativeByKey,
+      leading_trivia=left.leading_trivia,
+      trailing_trivia=left.trailing_trivia,
+    )
+    let r_as_obj = @cst.CstNode::interior(
+      id=0,
+      @cst.ObjectNode,
+      right.children,
+      ordering=@cst.CommutativeByKey,
+      leading_trivia=right.leading_trivia,
+      trailing_trivia=right.trailing_trivia,
+    )
+    let (merged_obj, c) = merge_commutative_containers(
+      b_as_obj, l_as_obj, r_as_obj, options, events, recurse_node,
+    )
+    return (
+      @cst.CstNode::interior(
+        id=0,
+        @cst.ArrayNode,
+        merged_obj.children,
+        ordering=@cst.Sequential,
+        leading_trivia=merged_obj.leading_trivia,
+        trailing_trivia=merged_obj.trailing_trivia,
+      ),
+      c,
+    )
+  }
+
+  // Scalar sequential array: if disjoint head/tail additions on an array, merge & normalize commas!
+  let _ = (l_open, l_close)
+  let d3 = @diff3.merge_lines_diff3(
+    base.unparse(),
+    left.unparse(),
+    right.unparse(),
+    style=options.style,
+    labels=options.labels,
+  )
+  (
+    @cst.CstNode::leaf(
+      id=0,
+      if d3.conflict_count > 0 {
+        @cst.ConflictBlock
+      } else {
+        @cst.ArrayNode
+      },
+      d3.text,
+      has_error=d3.conflict_count > 0,
+    ),
+    d3.conflict_count,
+  )
+}
