@@ -178,3 +178,115 @@ pub fn CstNode::trimmed_source(self : CstNode) -> String {
   buf.to_string().trim().to_owned()
 }
 
+///|
+/// Create a copy of `self` with updated `leading_trivia` and/or `trailing_trivia`,
+/// recomputing `exact_hash` while preserving `structural_hash`.
+pub fn CstNode::with_trivia(
+  self : CstNode,
+  leading_trivia~ : Array[Trivia] = self.leading_trivia,
+  trailing_trivia~ : Array[Trivia] = self.trailing_trivia,
+) -> CstNode {
+  if self.children.is_empty() {
+    CstNode::leaf(
+      id=self.id,
+      self.kind,
+      self.text,
+      signature=self.signature,
+      leading_trivia~,
+      trailing_trivia~,
+      span=self.span,
+      has_error=self.has_error,
+    )
+  } else {
+    CstNode::interior(
+      id=self.id,
+      self.kind,
+      self.children,
+      ordering=self.ordering,
+      signature=self.signature,
+      leading_trivia~,
+      trailing_trivia~,
+      span=self.span,
+      has_error=self.has_error,
+    )
+  }
+}
+
+///|
+/// Reassign dense preorder node IDs `0 .. N-1` across an entire CST tree.
+pub fn reindex_tree(root : CstNode, start_id~ : Int32 = 0) -> (CstNode, Int32) {
+  let my_id = start_id
+  let mut next_id = start_id + 1
+  if root.children.is_empty() {
+    let updated = { ..root, id: my_id, }
+    (updated, next_id)
+  } else {
+    let new_children : Array[CstNode] = Array(capacity=root.children.length())
+    for child in root.children {
+      let (re_child, after_child) = reindex_tree(child, start_id=next_id)
+      new_children.push(re_child)
+      next_id = after_child
+    }
+    let updated = CstNode::interior(
+      id=my_id,
+      root.kind,
+      new_children,
+      ordering=root.ordering,
+      signature=root.signature,
+      leading_trivia=root.leading_trivia,
+      trailing_trivia=root.trailing_trivia,
+      span=root.span,
+      has_error=root.has_error,
+    )
+    (updated, next_id)
+  }
+}
+
+///|
+/// Flatten a CST into a preorder array indexed by dense `node.id`.
+pub fn collect_preorder(root : CstNode) -> Array[CstNode] {
+  let out : Array[CstNode] = Array(capacity=root.size)
+  fn visit(n : CstNode) -> Unit {
+    out.push(n)
+    for c in n.children {
+      visit(c)
+    }
+  }
+
+  visit(root)
+  out
+}
+
+///|
+/// Detect duplicate semantic signatures inside any `CommutativeByKey` or
+/// `CommutativeBlocks` container (used by post-merge soundness verification).
+pub fn find_duplicate_signatures(root : CstNode) -> Array[String] {
+  let duplicates : Array[String] = []
+  fn inspect_node(node : CstNode) -> Unit {
+    match node.ordering {
+      CommutativeByKey | CommutativeBlocks => {
+        let seen : @hashmap.HashMap[String, Int32] = @hashmap.HashMap([])
+        for child in node.children {
+          match child.signature {
+            Some(sig) =>
+              if !sig.has_prefix("anon:") {
+                let prev = seen.get(sig).unwrap_or(0)
+                if prev == 1 {
+                  duplicates.push(sig)
+                }
+                seen.set(sig, prev + 1)
+              }
+            None => ()
+          }
+        }
+      }
+      Sequential => ()
+    }
+    for child in node.children {
+      inspect_node(child)
+    }
+  }
+
+  inspect_node(root)
+  duplicates
+}
