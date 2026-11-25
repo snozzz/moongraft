@@ -1,0 +1,12 @@
+import {
+  "moonbitlang/core/diff",
+}
+
+fn main {
+  let ours = ["import {", "  \"moonbitlang/core/debug\",", "  \"moonbitlang/core/hashmap\",", "}"]
+  let theirs = ["import {", "  \"moonbitlang/core/debug\",", "  \"moonbitlang/core/argparse\",", "}"]
+  let d = @diff.Diff(old=ours[:], new=theirs[:], algorithm=@diff.Patience)
+  println(
+    "MoonBit standalone .mbtx check: computed \{d.edits().length()} Patience diff edit(s); run `moon run cmd/demo` for full 3-way CST merge showcase.",
+  )
+}
