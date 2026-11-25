@@ -1,0 +1,79 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "snozzz/moongraft/src/merger"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+  "snozzz/moongraft/src/cst",
+  "snozzz/moongraft/src/diff3",
+}
+
+// Values
+pub fn make_conflict_node(String, String, String, MergeOptions, leading_trivia? : Array[@cst.Trivia]) -> (@cst.CstNode, Int32)
+
+pub fn merge_3way(String, String, String, MergeOptions) -> MergeResult
+
+pub fn merge_commutative_containers(@cst.CstNode, @cst.CstNode, @cst.CstNode, MergeOptions, Array[ResolutionEvent], (@cst.CstNode, @cst.CstNode, @cst.CstNode) -> (@cst.CstNode, Int32)) -> (@cst.CstNode, Int32)
+
+pub fn merge_cst_node(@cst.CstNode, @cst.CstNode, @cst.CstNode, MergeOptions, Array[ResolutionEvent]) -> (@cst.CstNode, Int32)
+
+pub fn merge_files_content(StringView, String, String, String, style? : @diff3.ConflictStyle, labels? : @diff3.MergeLabels) -> MergeResult
+
+pub fn merge_sequential_containers(@cst.CstNode, @cst.CstNode, @cst.CstNode, MergeOptions, Array[ResolutionEvent], (@cst.CstNode, @cst.CstNode, @cst.CstNode) -> (@cst.CstNode, Int32)) -> (@cst.CstNode, Int32)
+
+pub fn normalize_moonbit_block_separators(Array[@cst.CstNode], Bool) -> Array[@cst.CstNode]
+
+pub fn reassemble_delimited_entries(@cst.CstNode, Array[@cst.CstNode], @cst.CstNode, @cst.SyntaxKind, @cst.ChildOrdering, String?, Array[@cst.Trivia], Array[@cst.Trivia], Bool, String, Bool, Array[ResolutionEvent]) -> @cst.CstNode
+
+// Errors
+
+// Types and methods
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct MergeOptions {
+  language : @cst.Language
+  style : @diff3.ConflictStyle
+  labels : @diff3.MergeLabels
+  enable_subline : Bool
+  verify_syntax : Bool
+}
+pub fn MergeOptions::for_language(@cst.Language, style? : @diff3.ConflictStyle, labels? : @diff3.MergeLabels) -> Self
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct MergeResult {
+  merged_text : String
+  conflict_count : Int32
+  line_diff3_conflicts : Int32
+  language : @cst.Language
+  syntax_valid : Bool
+  safety_fallback_used : Bool
+  events : Array[ResolutionEvent]
+}
+pub fn MergeResult::is_clean(Self) -> Bool
+
+#derive(Eq, @debug.Debug, @json.ToJson)
+pub(all) struct ResolutionEvent {
+  kind : ResolutionKind
+  target : String
+  detail : String
+}
+
+#derive(Eq, Hash, @debug.Debug, @json.ToJson)
+pub(all) enum ResolutionKind {
+  FastPathIdentical
+  FastPathTrivialSide
+  CommutativeKeyWeave
+  ParallelBlockWeave
+  MoveAndEditComposed
+  RecursiveContainerMerge
+  FormattingReconciled
+  DuplicateDeduped
+  CommaSeparatorSynthesized
+  SublineTokenMerge
+  ConflictLocalized
+  DeleteModifyConflict
+  SafetyFallbackToDiff3
+}
+
+// Type aliases
+
+// Traits
