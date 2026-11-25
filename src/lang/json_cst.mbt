@@ -366,3 +366,151 @@ fn parse_json_object(
   )
 }
 
+///|
+/// Extract an identity signature (`"elem:id=..."` or `"elem:name=..."`) if an array element
+/// is an `ObjectNode` containing a scalar `"id"` or `"name"` property.
+fn extract_json_element_identity(val : @cst.CstNode) -> String? {
+  if val.kind != @cst.ObjectNode {
+    return None
+  }
+  for child in val.children {
+    if child.kind == @cst.ObjectEntry {
+      match child.signature {
+        Some("key:id") | Some("key:name") =>
+          if child.children.length() >= 3 {
+            let v = child.children[2]
+            if v.kind == @cst.StringLiteral || v.kind == @cst.NumberLiteral {
+              return Some("elem:" + child.signature.unwrap() + "=" + v.text)
+            }
+          }
+        _ => ()
+      }
+    }
+  }
+  None
+}
+
+///|
+fn parse_json_array(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+) -> @cst.CstNode {
+  let start_off = sc.byte_offset()
+  sc.advance() // '['
+  let children : Array[@cst.CstNode] = [
+    @cst.CstNode::leaf(
+      id=ids.alloc(),
+      @cst.Punctuation,
+      "[",
+      span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+    ),
+  ]
+  let mut has_err = false
+
+  while !sc.is_eof() {
+    let triv = sc.collect_c_like_trivia()
+    if sc.peek() == Some(']') {
+      let close_off = sc.byte_offset()
+      sc.advance()
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          "]",
+          leading_trivia=triv,
+          span=@cst.ByteSpan::new(close_off, sc.byte_offset()),
+        ),
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.ArrayNode,
+        children,
+        ordering=@cst.Sequential,
+        leading_trivia=leading,
+        span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+        has_error=has_err,
+      )
+    }
+
+    let elem_start = sc.byte_offset()
+    let val = parse_json_value(sc, ids, [])
+    if val.has_error {
+      has_err = true
+    }
+    let elem_sig = extract_json_element_identity(val)
+    let elem_node = @cst.CstNode::interior(
+      id=ids.alloc(),
+      @cst.ArrayElement,
+      [val],
+      signature=elem_sig,
+      leading_trivia=triv,
+      span=@cst.ByteSpan::new(elem_start, sc.byte_offset()),
+      has_error=val.has_error,
+    )
+    children.push(elem_node)
+
+    let after_triv = sc.collect_c_like_trivia()
+    if sc.peek() == Some(',') {
+      let comma_off = sc.byte_offset()
+      sc.advance()
+      let comma_trail = sc.collect_trailing_line_trivia(
+        allow_slash_comment=true,
+      )
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          ",",
+          leading_trivia=after_triv,
+          trailing_trivia=comma_trail,
+          span=@cst.ByteSpan::new(comma_off, sc.byte_offset()),
+        ),
+      )
+    } else if sc.peek() == Some(']') {
+      let close_off = sc.byte_offset()
+      sc.advance()
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          "]",
+          leading_trivia=after_triv,
+          span=@cst.ByteSpan::new(close_off, sc.byte_offset()),
+        ),
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.ArrayNode,
+        children,
+        ordering=@cst.Sequential,
+        leading_trivia=leading,
+        span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+        has_error=has_err,
+      )
+    } else {
+      has_err = true
+      if !after_triv.is_empty() {
+        children.push(
+          @cst.CstNode::leaf(
+            id=ids.alloc(),
+            @cst.ErrorFragment,
+            "",
+            leading_trivia=after_triv,
+            has_error=true,
+          ),
+        )
+      }
+    }
+  }
+
+  @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.ArrayNode,
+    children,
+    ordering=@cst.Sequential,
+    leading_trivia=leading,
+    span=@cst.ByteSpan::new(start_off, sc.byte_offset()),
+    has_error=true,
+  )
+}
