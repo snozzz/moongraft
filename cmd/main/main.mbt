@@ -138,6 +138,41 @@ fn build_cli() -> @argparse.Command {
     about="Print Git .gitattributes and .gitconfig snippets for MoonGraft",
   )
 
+  let rename_cmd = @argparse.Command(
+    "analyze-renames",
+    about="Detect cross-branch declaration renames and stale call-site semantic hazards",
+    options=[
+      @argparse.OptionArg(
+        "path",
+        short='p',
+        long="path",
+        about="Logical file path for language detection",
+      ),
+      @argparse.OptionArg(
+        "lang",
+        long="lang",
+        about="Explicit language override",
+      ),
+    ],
+    flags=[
+      @argparse.FlagArg(
+        "json",
+        long="json",
+        about="Emit machine-readable JSON rename & hazard report",
+      ),
+      @argparse.FlagArg(
+        "fail_on_hazard",
+        long="fail-on-hazard",
+        about="Exit with status 1 when cross-branch stale references are detected",
+      ),
+    ],
+    positionals=[
+      @argparse.PositionArg("base", about="Ancestor file (%O)"),
+      @argparse.PositionArg("left", about="Current branch file (%A)"),
+      @argparse.PositionArg("right", about="Other branch file (%B)"),
+    ],
+  )
+
   @argparse.Command(
     "moongraft",
     version="0.1.0",
@@ -145,7 +180,7 @@ fn build_cli() -> @argparse.Command {
     subcommand_required=true,
     arg_required_else_help=true,
     subcommands=[
-      merge_cmd, solve_cmd, diff_cmd, inspect_cmd, bench_cmd, setup_cmd,
+      merge_cmd, solve_cmd, diff_cmd, inspect_cmd, rename_cmd, bench_cmd, setup_cmd,
     ],
   )
 }
@@ -219,6 +254,7 @@ fn main {
         Some(("solve", sub)) => run_solve_subcommand(sub)
         Some(("diff", sub)) => run_diff_subcommand(sub)
         Some(("inspect", sub)) => run_inspect_subcommand(sub)
+        Some(("analyze-renames", sub)) => run_analyze_renames_subcommand(sub)
         Some(("bench-suite", sub)) => run_bench_suite_subcommand(sub)
         Some(("setup", _)) => {
           io_print_raw("# --- .gitattributes ---\n")
@@ -425,6 +461,80 @@ fn run_bench_suite_subcommand(sub : @argparse.Matches) -> Unit {
     io_print_raw(@report.render_suite_markdown(summary))
   }
   if !summary.all_assertions_passed {
+    @env.exit(1)
+  }
+}
+
+///|
+fn run_analyze_renames_subcommand(sub : @argparse.Matches) -> Unit {
+  let base_path = first_val(sub, "base").unwrap_or("")
+  let left_path = first_val(sub, "left").unwrap_or("")
+  let right_path = first_val(sub, "right").unwrap_or("")
+
+  let base_src = match io_read_file(base_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let left_src = match io_read_file(left_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let right_src = match io_read_file(right_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+
+  let logical_path = first_val(sub, "path").unwrap_or(left_path)
+  let analysis = @moongraft.analyze_renames(
+    base_src,
+    left_src,
+    right_src,
+    path=logical_path,
+    language=parse_lang_opt(sub),
+  )
+
+  if flag_on(sub, "json") {
+    let j : Json = ToJson::to_json(analysis)
+    io_print_raw(j.stringify(indent=2) + "\n")
+  } else {
+    if analysis.renames.is_empty() {
+      io_print_raw("No declaration renames detected across branches.\n")
+    } else {
+      io_print_raw("Detected declaration renames:\n")
+      for r in analysis.renames {
+        io_print_raw(
+          "  - [" +
+          r.branch +
+          "] " +
+          r.syntax_kind +
+          " `" +
+          r.old_identifier +
+          "` -> `" +
+          r.new_identifier +
+          "` (" +
+          r.similarity_pct.to_string() +
+          "% body Dice similarity)\n",
+        )
+      }
+    }
+    if !analysis.hazards.is_empty() {
+      io_print_raw("\nSemantic stale-reference hazards:\n")
+      for h in analysis.hazards {
+        io_print_raw("  ! " + h.suggestion + "\n")
+      }
+    }
+  }
+
+  if flag_on(sub, "fail_on_hazard") && !analysis.hazards.is_empty() {
     @env.exit(1)
   }
 }
