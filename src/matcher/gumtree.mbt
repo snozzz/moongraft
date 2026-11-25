@@ -189,3 +189,185 @@ fn bind_isomorphic_subtree(
   }
 }
 
+///|
+/// Match modified declarations/entries sharing `(SyntaxKind, signature)`, preferring
+/// partners under an already-matched parent, then falling back to file-global signature
+/// matching for moved + modified top-level declarations!
+fn match_by_semantic_signatures(mapping : TreeMapping) -> Unit {
+  let dst_by_sig : @hashmap.HashMap[(UInt64, String), Array[@cst.CstNode]] = @hashmap.HashMap([],
+  )
+  for dn in mapping.dst_nodes {
+    if !mapping.is_dst_matched(dn.id) {
+      match dn.signature {
+        Some(sig) =>
+          if !sig.has_prefix("anon:") {
+            let k = (dn.kind.tag(), sig)
+            match dst_by_sig.get(k) {
+              Some(arr) => arr.push(dn)
+              None => dst_by_sig.set(k, [dn])
+            }
+          }
+        None => ()
+      }
+    }
+  }
+
+  // Preorder pass so outer containers (`TableSection`, `ClassDecl`, `ObjectEntry`) link BEFORE
+  // their nested entries (`KeyValue`, `FnDecl`), giving inner entries matched parent context!
+  for sn in mapping.src_nodes {
+    if mapping.is_src_matched(sn.id) {
+      continue
+    }
+    match sn.signature {
+      Some(sig) =>
+        if !sig.has_prefix("anon:") {
+          let k = (sn.kind.tag(), sig)
+          match dst_by_sig.get(k) {
+            Some(cands) => {
+              let avail : Array[@cst.CstNode] = []
+              for c in cands {
+                if !mapping.is_dst_matched(c.id) {
+                  avail.push(c)
+                }
+              }
+              if !avail.is_empty() {
+                // For local property keys (`key:port`), require either same matched parent OR
+                // unique global signature if top-level declaration (`fn:...`, `struct:...`, `table:...`)
+                let s_parent = mapping.src_parents[sn.id]
+                let mapped_sp = if s_parent >= 0 {
+                  mapping.src_to_dst[s_parent]
+                } else {
+                  -1
+                }
+                let mut same_parent_cand : @cst.CstNode? = None
+                for c in avail {
+                  if mapped_sp >= 0 && mapping.dst_parents[c.id] == mapped_sp {
+                    same_parent_cand = Some(c)
+                    break
+                  }
+                }
+                let chosen : @cst.CstNode? = match same_parent_cand {
+                  Some(c) => Some(c)
+                  None =>
+                    if is_movable_declaration_sig(sig) && avail.length() == 1 {
+                      Some(avail[0])
+                    } else {
+                      None
+                    }
+                }
+                match chosen {
+                  Some(partner) => {
+                    let _ = mapping.link(sn.id, partner.id, SignatureMatched)
+                  }
+                  None => ()
+                }
+              }
+            }
+            None => ()
+          }
+        }
+      None => ()
+    }
+  }
+}
+
+///|
+fn is_movable_declaration_sig(sig : String) -> Bool {
+  sig.has_prefix("fn:") ||
+  sig.has_prefix("def:") ||
+  sig.has_prefix("method:") ||
+  sig.has_prefix("test:") ||
+  sig.has_prefix("struct:") ||
+  sig.has_prefix("enum:") ||
+  sig.has_prefix("suberror:") ||
+  sig.has_prefix("trait:") ||
+  sig.has_prefix("impl:") ||
+  sig.has_prefix("class:") ||
+  sig.has_prefix("interface:") ||
+  sig.has_prefix("table:") ||
+  sig.has_prefix("imports:") ||
+  sig.has_prefix("item:") ||
+  sig.has_prefix("elem:")
+}
+
+///|
+/// Bottom-up post-order recovery of unnamed containers (`Block`, `ObjectNode`, `ArrayNode`,
+/// `MappingNode`, `SequenceNode`) via matched-parent structural correspondence or Dice similarity.
+fn recover_containers_bottom_up(
+  mapping : TreeMapping,
+  node : @cst.CstNode,
+) -> Unit {
+  for child in node.children {
+    recover_containers_bottom_up(mapping, child)
+  }
+  if node.is_leaf() || mapping.is_src_matched(node.id) {
+    return
+  }
+
+  // Fast path: if `node`'s parent is already matched to `dp`, and `dp` has a single unmatched
+  // child of the exact same `SyntaxKind` (e.g., the body `Block` of a matched `FnDecl` or
+  // the value `ObjectNode` of a matched `ObjectEntry`), link them directly!
+  let sp = mapping.src_parents[node.id]
+  if sp >= 0 && mapping.is_src_matched(sp) {
+    let dp_id = mapping.src_to_dst[sp]
+    let dp = mapping.dst_nodes[dp_id]
+    let same_kind_unmatched : Array[@cst.CstNode] = []
+    for dc in dp.children {
+      if !dc.is_leaf() && dc.kind == node.kind && !mapping.is_dst_matched(dc.id) {
+        same_kind_unmatched.push(dc)
+      }
+    }
+    if same_kind_unmatched.length() == 1 {
+      let _ = mapping.link(node.id, same_kind_unmatched[0].id, DiceContainer)
+      return
+    }
+  }
+
+  // General GumTree Dice similarity over matched descendants
+  let src_desc = collect_subtree_ids(node)
+  let candidate_ids : @hashmap.HashMap[Int32, Bool] = @hashmap.HashMap([])
+  for sid in src_desc {
+    if mapping.is_src_matched(sid) {
+      let mut cur = mapping.dst_parents[mapping.src_to_dst[sid]]
+      while cur >= 0 {
+        if !mapping.is_dst_matched(cur) &&
+          mapping.dst_nodes[cur].kind == node.kind {
+          candidate_ids.set(cur, true)
+        }
+        cur = mapping.dst_parents[cur]
+      }
+    }
+  }
+
+  let mut best_dst = -1
+  let mut best_num = 0
+  let mut best_den = 1
+  candidate_ids.each(fn(cand_id, _) {
+    let cand = mapping.dst_nodes[cand_id]
+    let cand_desc = collect_subtree_ids(cand)
+    let cand_set : @hashmap.HashMap[Int32, Bool] = @hashmap.HashMap([])
+    for did in cand_desc {
+      cand_set.set(did, true)
+    }
+    let mut common = 0
+    for sid in src_desc {
+      if mapping.is_src_matched(sid) &&
+        cand_set.get(mapping.src_to_dst[sid]).unwrap_or(false) {
+        common += 1
+      }
+    }
+    let num = 2 * common
+    let den = src_desc.length() + cand_desc.length()
+    // Require Dice >= 0.45 (`20 * common >= 9 * den` avoids float rounding!)
+    if 20 * common >= 9 * den && num * best_den > best_num * den {
+      best_dst = cand_id
+      best_num = num
+      best_den = den
+    }
+  })
+
+  if best_dst >= 0 {
+    let _ = mapping.link(node.id, best_dst, DiceContainer)
+  }
+}
+
