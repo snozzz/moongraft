@@ -213,3 +213,22 @@ fn weave_commutative_key_order(
   (result, l_reordered || r_reordered)
 }
 
+///|
+/// Detect indentation prefix used by existing entries in a container.
+fn infer_entry_indent(
+  b_items : Array[@cst.CstNode],
+  l_items : Array[@cst.CstNode],
+  r_items : Array[@cst.CstNode],
+) -> String {
+  for list in [l_items, r_items, b_items] {
+    for item in list {
+      for t in item.leading_trivia {
+        if t.kind == @cst.Whitespace && !t.text.is_empty() {
+          return t.text
+        }
+      }
+    }
+  }
+  "  "
+}
+
