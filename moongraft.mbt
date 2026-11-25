@@ -1,5 +1,17 @@
 ///|
 /// High-level public library entry point: perform syntax-aware 3-way CST merge on `(base, left, right)`.
+///
+/// # Example
+/// ```mbt check
+/// test {
+///   let base = "import {\n  \"moonbitlang/core/debug\",\n}\n"
+///   let ours = "import {\n  \"moonbitlang/core/debug\",\n  \"moonbitlang/core/hashmap\",\n}\n"
+///   let theirs = "import {\n  \"moonbitlang/core/debug\",\n  \"moonbitlang/core/json\",\n}\n"
+///   let res = @moongraft.merge(base, ours, theirs, path="moon.pkg")
+///   inspect(res.conflict_count, content="0")
+///   inspect(res.syntax_valid, content="true")
+/// }
+/// ```
 pub fn merge(
   base : String,
   left : String,
@@ -19,6 +31,16 @@ pub fn merge(
 
 ///|
 /// Resolve inline Git conflict markers (`<<<<<<< / ||||||| / ======= / >>>>>>>`) in `conflicted_text`.
+///
+/// # Example
+/// ```mbt check
+/// test {
+///   let conflicted = "{\n  \"a\": 1,\n<<<<<<< HEAD\n  \"b\": 2\n=======\n  \"c\": 3\n>>>>>>> branch\n}\n"
+///   let solved = @moongraft.solve_conflicts(conflicted, path="config.json")
+///   inspect(solved.initial_conflicts, content="1")
+///   inspect(solved.remaining_conflicts, content="0")
+/// }
+/// ```
 pub fn solve_conflicts(
   conflicted_text : String,
   path~ : StringView = "",
@@ -35,6 +57,16 @@ pub fn solve_conflicts(
 
 ///|
 /// Compute syntax-aware structural AST edits (including `Moved` and `MovedAndModified` declarations).
+///
+/// # Example
+/// ```mbt check
+/// test {
+///   let old_src = "{\n  \"a\": 1\n}\n"
+///   let new_src = "{\n  \"a\": 1,\n  \"b\": 2\n}\n"
+///   let edits = @moongraft.structural_diff(old_src, new_src, path="data.json")
+///   inspect(edits.length(), content="1")
+/// }
+/// ```
 pub fn structural_diff(
   old_text : String,
   new_text : String,
