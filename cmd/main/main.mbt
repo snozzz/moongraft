@@ -359,3 +359,72 @@ fn run_solve_subcommand(sub : @argparse.Matches) -> Unit {
   }
 }
 
+///|
+fn run_diff_subcommand(sub : @argparse.Matches) -> Unit {
+  let old_path = first_val(sub, "old").unwrap_or("")
+  let new_path = first_val(sub, "new").unwrap_or("")
+  let old_src = match io_read_file(old_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let new_src = match io_read_file(new_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let lang = match parse_lang_opt(sub) {
+    Some(l) => l
+    None => @lang.detect_language(new_path, content=new_src)
+  }
+  let edits = @moongraft.structural_diff(
+    old_src,
+    new_src,
+    path=new_path,
+    language=Some(lang),
+  )
+  if flag_on(sub, "json") {
+    let j : Json = ToJson::to_json(edits)
+    io_print_raw(j.stringify(indent=2) + "\n")
+  } else {
+    io_print_raw(
+      @report.render_structural_diff(old_path, new_path, lang, edits),
+    )
+  }
+}
+
+///|
+fn run_inspect_subcommand(sub : @argparse.Matches) -> Unit {
+  let file_path = first_val(sub, "file").unwrap_or("")
+  let src = match io_read_file(file_path) {
+    Ok(s) => s
+    Err(e) => {
+      io_eprintln("moongraft: " + e)
+      @env.exit(2)
+    }
+  }
+  let sexp = @moongraft.inspect_cst_sexp(
+    src,
+    path=file_path,
+    language=parse_lang_opt(sub),
+  )
+  io_print_raw(sexp)
+}
+
+///|
+fn run_bench_suite_subcommand(sub : @argparse.Matches) -> Unit {
+  let summary = @moongraft.evaluate_corpus()
+  if flag_on(sub, "json") {
+    let j : Json = ToJson::to_json(summary)
+    io_print_raw(j.stringify(indent=2) + "\n")
+  } else {
+    io_print_raw(@report.render_suite_markdown(summary))
+  }
+  if !summary.all_assertions_passed {
+    @env.exit(1)
+  }
+}
