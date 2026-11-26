@@ -56,6 +56,7 @@ fn split_container_parts(node : @cst.CstNode) -> ContainerParts {
     (
       cs[end - 1].text == "}" ||
       cs[end - 1].text == "]" ||
+      cs[end - 1].text == ")" ||
       cs[end - 1].text.has_prefix("}")
     ) {
     close_punct = Some(cs[end - 1])
@@ -511,7 +512,7 @@ pub fn merge_commutative_containers(
         ) &&
         options.language != @cst.Json
       let uses_commas = left.kind == @cst.ObjectNode ||
-        left.kind == @cst.ImportGroup
+        (left.kind == @cst.ImportGroup && options.language == @cst.MoonManifest)
       if uses_commas {
         let assembled = reassemble_delimited_entries(
           open_p,

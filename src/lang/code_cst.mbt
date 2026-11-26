@@ -55,6 +55,31 @@ pub fn parse_c_family_code_cst(
     }
 
     let decl_start = sc.pos
+    if lang == @cst.Cpp && sc.starts_with("#include") {
+      let inc = scan_statement_until_semicolon_or_eol(
+        sc,
+        ids,
+        triv,
+        @cst.ImportItem,
+        "include:",
+      )
+      pending_imports.push(inc)
+      continue
+    }
+    if lang == @cst.Cpp && sc.peek() == Some('#') {
+      flush_imports()
+      items.push(
+        scan_statement_until_semicolon_or_eol(
+          sc,
+          ids,
+          triv,
+          @cst.Attribute,
+          "pp:",
+        ),
+      )
+      continue
+    }
+
     // Skip attributes (`#[...]` in Rust or `@decorator` in TS)
     while (sc.peek() == Some('#') && sc.peek(delta=1) == Some('[')) ||
           sc.peek() == Some('@') {
@@ -78,12 +103,47 @@ pub fn parse_c_family_code_cst(
           kw == "async" ||
           kw == "unsafe" ||
           kw == "declare" ||
-          kw == "abstract" {
+          kw == "abstract" ||
+          kw == "inline" ||
+          kw == "constexpr" ||
+          kw == "extern" {
       if kw == "pub" && sc.peek() == Some('(') {
         let _ = sc.skip_balanced_group()
       }
+      if kw == "extern" && sc.peek() == Some('"') {
+        let _ = sc.scan_quoted_string()
+      }
       let _ = sc.collect_c_like_trivia()
       kw = sc.scan_ident()
+    }
+
+    if kw == "package" && lang == @cst.Go {
+      flush_imports()
+      let _ = sc.consume_spaces()
+      let pkg_name = sc.scan_ident()
+      sc.pos = decl_start
+      items.push(
+        scan_statement_until_semicolon_or_eol(
+          sc,
+          ids,
+          triv,
+          @cst.ModuleBlock,
+          "package:" + pkg_name,
+          fixed_sig=!pkg_name.is_empty(),
+        ),
+      )
+      continue
+    }
+
+    if kw == "import" && lang == @cst.Go {
+      let _ = sc.consume_spaces()
+      if sc.peek() == Some('(') {
+        flush_imports()
+        sc.pos = decl_start
+        items.push(parse_go_grouped_imports(sc, ids, triv, import_group_idx))
+        import_group_idx += 1
+        continue
+      }
     }
 
     if kw == "import" || kw == "use" {
@@ -101,7 +161,7 @@ pub fn parse_c_family_code_cst(
 
     flush_imports()
     match kw {
-      "function" | "fn" =>
+      "function" | "fn" | "func" =>
         items.push(
           parse_c_family_block_decl(
             sc,
@@ -122,6 +182,18 @@ pub fn parse_c_family_code_cst(
             decl_start,
             @cst.ClassDecl,
             "class",
+            true,
+          ),
+        )
+      "namespace" =>
+        items.push(
+          parse_c_family_block_decl(
+            sc,
+            ids,
+            triv,
+            decl_start,
+            @cst.ModuleBlock,
+            "namespace",
             true,
           ),
         )
@@ -192,6 +264,36 @@ pub fn parse_c_family_code_cst(
           let _ = sc.consume_spaces()
           name = sc.scan_ident()
         }
+        if lang == @cst.Go && kw == "type" && !name.is_empty() {
+          if sc.peek() == Some('[') {
+            let _ = sc.skip_balanced_group()
+          }
+          let _ = sc.consume_spaces()
+          let go_sub = sc.scan_ident()
+          if go_sub == "struct" || go_sub == "interface" {
+            let go_kind = if go_sub == "struct" {
+              @cst.StructDecl
+            } else {
+              @cst.InterfaceDecl
+            }
+            items.push(
+              parse_go_named_type_block(
+                sc, ids, triv, decl_start, go_kind, go_sub, name,
+              ),
+            )
+            continue
+          }
+        }
+        if lang == @cst.Cpp && kw == "static" {
+          sc.pos = decl_start
+          match try_parse_cpp_typed_fn_decl(sc, ids, triv, decl_start) {
+            Some(fn_node) => {
+              items.push(fn_node)
+              continue
+            }
+            None => sc.pos = decl_start
+          }
+        }
         sc.pos = decl_start
         let kind = if kw == "type" { @cst.TypeDecl } else { @cst.ConstDecl }
         let sig_prefix = kw + ":" + name
@@ -209,6 +311,15 @@ pub fn parse_c_family_code_cst(
       _ => {
         sc.pos = probe
         sc.pos = decl_start
+        if lang == @cst.Cpp {
+          match try_parse_cpp_typed_fn_decl(sc, ids, triv, decl_start) {
+            Some(fn_node) => {
+              items.push(fn_node)
+              continue
+            }
+            None => sc.pos = decl_start
+          }
+        }
         items.push(
           scan_statement_until_semicolon_or_eol(sc, ids, triv, @cst.Stmt, ""),
         )
@@ -304,6 +415,27 @@ fn parse_c_family_block_decl(
   commutative_members : Bool,
 ) -> @cst.CstNode {
   let _ = sc.collect_c_like_trivia()
+  let mut recv_prefix = ""
+  if tag == "fn" && sc.peek() == Some('(') {
+    let r_start = sc.pos
+    let _ = sc.skip_balanced_group()
+    let raw_recv = sc.slice_chars(r_start, sc.pos)
+    // Extract receiver type (last identifier inside `(s *Server)` -> `Server`)
+    let r_sc = Scanner::new(raw_recv)
+    let mut last_id = ""
+    while !r_sc.is_eof() {
+      let id = r_sc.scan_ident()
+      if !id.is_empty() {
+        last_id = id
+      } else {
+        r_sc.advance()
+      }
+    }
+    if !last_id.is_empty() {
+      recv_prefix = last_id + "."
+    }
+    let _ = sc.collect_c_like_trivia()
+  }
   if sc.peek() == Some('<') {
     while !sc.is_eof() && sc.peek() != Some('>') {
       sc.advance()
@@ -313,10 +445,20 @@ fn parse_c_family_block_decl(
     }
     let _ = sc.collect_c_like_trivia()
   }
-  let name = sc.scan_ident()
+  let raw_name = sc.scan_ident()
+  let name = if !raw_name.is_empty() { recv_prefix + raw_name } else { "" }
   while !sc.is_eof() {
     match sc.peek() {
       Some('{') => break
+      Some('`') => {
+        sc.advance()
+        while !sc.is_eof() && sc.peek() != Some('`') {
+          sc.advance()
+        }
+        if sc.peek() == Some('`') {
+          sc.advance()
+        }
+      }
       Some(';') => {
         sc.advance()
         let raw = sc.slice_chars(decl_start, sc.pos)
@@ -379,6 +521,192 @@ fn parse_c_family_block_decl(
       has_error=true,
     )
   }
+}
+
+///|
+/// Parse Go grouped `import ( ... )` block as a commutative `ImportGroup`.
+fn parse_go_grouped_imports(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  group_idx : Int32,
+) -> @cst.CstNode {
+  let open_start = sc.pos
+  while !sc.is_eof() && sc.peek() != Some('(') {
+    sc.advance()
+  }
+  if sc.peek() == Some('(') {
+    sc.advance()
+  }
+  let open_raw = sc.slice_chars(open_start, sc.pos)
+  let open_trail = sc.collect_trailing_line_trivia(allow_slash_comment=true)
+  let children : Array[@cst.CstNode] = [
+    @cst.CstNode::leaf(
+      id=ids.alloc(),
+      @cst.Keyword,
+      open_raw,
+      trailing_trivia=open_trail,
+    ),
+  ]
+  let mut has_err = false
+  while !sc.is_eof() {
+    let triv = sc.collect_c_like_trivia()
+    if sc.peek() == Some(')') {
+      sc.advance()
+      let close_trail = sc.collect_trailing_line_trivia(
+        allow_slash_comment=true,
+      )
+      children.push(
+        @cst.CstNode::leaf(
+          id=ids.alloc(),
+          @cst.Punctuation,
+          ")",
+          leading_trivia=triv,
+          trailing_trivia=close_trail,
+        ),
+      )
+      return @cst.CstNode::interior(
+        id=ids.alloc(),
+        @cst.ImportGroup,
+        children,
+        ordering=@cst.CommutativeByKey,
+        signature=Some("imports#" + group_idx.to_string()),
+        leading_trivia=leading,
+        has_error=has_err,
+      )
+    }
+    if sc.is_eof() {
+      has_err = true
+      break
+    }
+    let imp = scan_statement_until_semicolon_or_eol(
+      sc,
+      ids,
+      triv,
+      @cst.ImportItem,
+      "import:",
+    )
+    children.push(imp)
+  }
+  @cst.CstNode::interior(
+    id=ids.alloc(),
+    @cst.ImportGroup,
+    children,
+    ordering=@cst.CommutativeByKey,
+    signature=Some("imports#" + group_idx.to_string()),
+    leading_trivia=leading,
+    has_error=true,
+  )
+}
+
+///|
+/// Parse Go `type Name struct { ... }` / `type Name interface { ... }` declaration.
+fn parse_go_named_type_block(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  decl_start : Int32,
+  kind : @cst.SyntaxKind,
+  tag : String,
+  name : String,
+) -> @cst.CstNode {
+  while !sc.is_eof() && sc.peek() != Some('{') && sc.peek() != Some('\n') {
+    sc.advance()
+  }
+  if sc.peek() == Some('{') {
+    let hdr = sc.slice_chars(decl_start, sc.pos)
+    let hdr_leaf = @cst.CstNode::leaf(id=ids.alloc(), @cst.Keyword, hdr)
+    let body = parse_mbt_member_block(sc, ids, @cst.FieldDecl)
+    @cst.CstNode::interior(
+      id=ids.alloc(),
+      kind,
+      [hdr_leaf, body],
+      signature=Some(tag + ":" + name),
+      leading_trivia=leading,
+      has_error=body.has_error,
+    )
+  } else {
+    sc.pos = decl_start
+    scan_statement_until_semicolon_or_eol(
+      sc,
+      ids,
+      leading,
+      @cst.TypeDecl,
+      "type:" + name,
+      fixed_sig=true,
+    )
+  }
+}
+
+///|
+/// Recognize C/C++ typed function definitions (`ReturnType name(params) { ... }`).
+fn try_parse_cpp_typed_fn_decl(
+  sc : Scanner,
+  ids : IdGen,
+  leading : Array[@cst.Trivia],
+  decl_start : Int32,
+) -> @cst.CstNode? {
+  sc.pos = decl_start
+  let mut last_ident = ""
+  let mut fn_name = ""
+  let mut saw_params = false
+  while !sc.is_eof() {
+    match sc.peek() {
+      Some(';') | Some('=') => return None
+      Some('{') =>
+        if saw_params && !fn_name.is_empty() {
+          let hdr = sc.slice_chars(decl_start, sc.pos)
+          let hdr_leaf = @cst.CstNode::leaf(id=ids.alloc(), @cst.Keyword, hdr)
+          let body = parse_brace_statement_block(sc, ids)
+          return Some(
+            @cst.CstNode::interior(
+              id=ids.alloc(),
+              @cst.FnDecl,
+              [hdr_leaf, body],
+              signature=Some("fn:" + fn_name),
+              leading_trivia=leading,
+              has_error=body.has_error,
+            ),
+          )
+        } else {
+          return None
+        }
+      Some('(') => {
+        if !saw_params && !last_ident.is_empty() {
+          fn_name = last_ident
+          saw_params = true
+        }
+        if !sc.skip_balanced_group() {
+          return None
+        }
+      }
+      Some('[') => if !sc.skip_balanced_group() { return None }
+      Some('"') | Some('\'') => {
+        let (_, _, ok) = sc.scan_quoted_string()
+        if !ok {
+          return None
+        }
+      }
+      Some('/') =>
+        if sc.starts_with("//") || sc.starts_with("/*") {
+          let _ = sc.collect_c_like_trivia()
+        } else {
+          sc.advance()
+        }
+      _ => {
+        let id = sc.scan_ident()
+        if !id.is_empty() {
+          if id == "if" || id == "for" || id == "while" || id == "switch" {
+            return None
+          }
+          last_ident = id
+        } else {
+          sc.advance()
+        }
+      }
+    }
+  }
+  None
 }
 
 ///|

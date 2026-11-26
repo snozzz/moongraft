@@ -2,6 +2,14 @@
 
 All notable changes to `MoonGraft` (`snozzz/moongraft`) are documented in this file.
 
+## [0.2.0] - 2026-11-26
+
+### Added
+- **Go (`.go`) Structural CST Merge Support (`src/lang`, `src/merger`)**: Lossless parsing and commutative 3-way merging for Go grouped `import ( ... )` blocks, `type Name struct` / `interface` member blocks (including backtick struct tags), and receiver-qualified `func (r *Recv) Method(...)` declarations.
+- **C/C++ (`.c`, `.h`, `.cpp`, `.hpp`) Structural CST Merge Support (`src/lang`)**: Commutative `#include` header weaving, `namespace` member blocks, and typed free-function Move + Edit resolution.
+- **Expanded Multi-Language Benchmark Corpus (`src/report`)**: Extended built-in benchmark suite to 18 scenarios (`15/15` resolvable clean vs `1/15` for line `diff3`; `3/3` true conflicts preserved).
+- **Automated `mooncakes.io` Release Workflow (`.github/workflows/publish.yml`)**: Added manual `workflow_dispatch` release pipeline and badges in `README.mbt.md`.
+
 ## [0.1.0] - 2026-11-25
 
 ### Added

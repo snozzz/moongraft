@@ -1,5 +1,9 @@
 # MoonGraft (`snozzz/moongraft`)
 
+[![CI](https://github.com/snozzz/moongraft/actions/workflows/ci.yml/badge.svg)](https://github.com/snozzz/moongraft/actions/workflows/ci.yml)
+[![mooncakes.io](https://img.shields.io/badge/mooncakes.io-snozzz%2Fmoongraft-5c4ee5)](https://mooncakes.io/docs/snozzz/moongraft)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 **Syntax-Aware 3-Way CST Merge Engine, Move-Edit Refactoring Resolver & Multi-Agent Git Merge Driver in Pure MoonBit**
 
 > **2026 MoonBit Hackathon Entry** — Reusable `mooncakes.io`-ready library + Git Merge Driver CLI + Interactive Web Workbench, written in 100% pure, zero-FFI core MoonBit (`wasm-gc`, `wasm`, `js`, and `native` targets).
@@ -53,7 +57,7 @@ Line-based `git merge` (`diff3`) treats source code and structured configuration
 3. **Parallel Manifest & Workflow Evolution**: Adding disjoint dependencies in `Cargo.toml` (including inline tables `serde = { ... }`), `moon.pkg` `import { ... }` blocks, or named steps in GitHub Actions `.yml` workflows causes constant false conflicts.
 4. **Cross-Branch Symbol Renames**: Branch A renames `parse_config` to `load_config` while Branch B adds a new caller invoking `parse_config(...)`—producing a silent semantic break that text-based merge tools miss completely.
 
-**MoonGraft** brings lossless Concrete Syntax Tree (CST) 3-way structural merging natively to the MoonBit ecosystem across **MoonBit (`.mbt`, `.mbti`)**, **MoonBit Manifests (`moon.pkg`, `moon.mod`)**, **JSON/JSONC**, **TOML**, **YAML**, **TypeScript/JavaScript**, **Python**, and **Rust**.
+**MoonGraft** brings lossless Concrete Syntax Tree (CST) 3-way structural merging natively to the MoonBit ecosystem across **MoonBit (`.mbt`, `.mbti`)**, **MoonBit Manifests (`moon.pkg`, `moon.mod`)**, **JSON/JSONC**, **TOML**, **YAML**, **TypeScript/JavaScript**, **Python**, **Rust**, **Go**, and **C/C++**.
 
 ---
 
@@ -82,7 +86,7 @@ Evaluated on the built-in 16-scenario multi-language corpus (`moon run cmd/demo`
 
 | Metric | Standard Line `diff3` | `MoonGraft` CST Merge |
 | :--- | :---: | :---: |
-| **Resolvable Parallel / Move-Edit Scenarios Cleanly Merged** | 1 / 13 (7.7%) | **13 / 13 (100.0%)** |
+| **Resolvable Parallel / Move-Edit Scenarios Cleanly Merged** | 1 / 15 (6.7%) | **15 / 15 (100.0%)** |
 | **True Semantic Conflicts Soundly Flagged (0 Silent Loss)** | 3 / 3 (100.0%) | **3 / 3 (100.0%)** |
 | **Merged Output Syntax & Compiler Validity (`moon check`, `json`, `tomllib`)** | N/A | **100.0%** |
 | **120 Randomized Property-Based Trials (Idempotency, Identity, Commutativity)** | — | **120 / 120 Passed** |

@@ -200,6 +200,33 @@ pub fn builtin_benchmark_corpus() -> Array[BenchmarkCase] {
       ],
     },
     {
+      id: "go-imports-and-methods",
+      title: "Go parallel grouped imports, struct fields, and receiver methods",
+      path: "internal/router/server.go",
+      language: @cst.Go,
+      expect_clean: true,
+      base: "package router\n\nimport (\n\t\"context\"\n)\n\ntype Server struct {\n\tAddr string\n}\n\nfunc (s *Server) Start(ctx context.Context) error {\n\treturn nil\n}\n",
+      left: "package router\n\nimport (\n\t\"context\"\n\t\"log/slog\"\n)\n\ntype Server struct {\n\tAddr string\n\tLogger *slog.Logger\n}\n\nfunc (s *Server) Start(ctx context.Context) error {\n\treturn nil\n}\n\nfunc (s *Server) Healthz() string {\n\treturn \"ok\"\n}\n",
+      right: "package router\n\nimport (\n\t\"context\"\n\t\"time\"\n)\n\ntype Server struct {\n\tAddr string\n\tReadTimeout time.Duration\n}\n\nfunc (s *Server) Start(ctx context.Context) error {\n\treturn nil\n}\n\nfunc (s *Server) Shutdown() error {\n\treturn nil\n}\n",
+      must_contain: [
+        "\"log/slog\"", "\"time\"", "Logger *slog.Logger", "ReadTimeout time.Duration",
+        "func (s *Server) Healthz()", "func (s *Server) Shutdown()",
+      ],
+    },
+    {
+      id: "cpp-includes-and-functions",
+      title: "C/C++ parallel #include directives and moved+edited free function",
+      path: "src/checksum.cpp",
+      language: @cst.Cpp,
+      expect_clean: true,
+      base: "#include <cstdint>\n\nuint32_t step_hash(uint32_t h, uint32_t b) {\n  uint32_t prime = 16777619u;\n  return (h ^ b) * prime;\n}\n\nuint32_t seed_hash() {\n  return 2166136261u;\n}\n",
+      left: "#include <cstdint>\n#include <cstddef>\n\nuint32_t seed_hash() {\n  return 2166136261u;\n}\n\nuint32_t step_hash(uint32_t h, uint32_t b) {\n  uint32_t prime = 16777619u;\n  return (h ^ (b & 0xffu)) * prime;\n}\n",
+      right: "#include <cstdint>\n#include <array>\n\nuint32_t step_hash(uint32_t h, uint32_t b) {\n  uint32_t prime = 16777619u;\n  return (h ^ b) * prime;\n}\n\nuint32_t seed_hash() {\n  return 2166136261u;\n}\n\nbool is_nonzero_digest(uint32_t h) {\n  return h != 0u;\n}\n",
+      must_contain: [
+        "#include <cstddef>", "#include <array>", "b & 0xffu", "bool is_nonzero_digest(",
+      ],
+    },
+    {
       id: "conflict-delete-modify",
       title: "True Conflict Safety: JSON Delete vs Modify",
       path: "policy.json",
