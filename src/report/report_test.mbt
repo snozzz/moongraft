@@ -1,10 +1,10 @@
 ///|
-test "all 16 built-in multi-language benchmark cases pass with 100% accuracy" {
+test "all 18 built-in multi-language benchmark cases pass with 100% accuracy" {
   let summary = @report.run_benchmark_suite()
-  assert_eq(summary.total_cases, 16)
-  assert_eq(summary.expected_clean_cases, 13)
+  assert_eq(summary.total_cases, 18)
+  assert_eq(summary.expected_clean_cases, 15)
   assert_eq(summary.expected_conflict_cases, 3)
-  assert_eq(summary.moongraft_clean_on_resolvable, 13)
+  assert_eq(summary.moongraft_clean_on_resolvable, 15)
   assert_eq(summary.true_conflicts_preserved, 3)
   assert_true(summary.all_assertions_passed)
   assert_true(
