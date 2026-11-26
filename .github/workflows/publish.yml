@@ -1,0 +1,105 @@
+name: Publish to mooncakes.io
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          core.autocrlf: false
+
+      - name: Install latest MoonBit toolchain
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate with mooncakes.io and publish module
+        env:
+          MOONCAKES_OAUTH_CODE: ${{ secrets.MOONCAKES_OAUTH_CODE }}
+        run: |
+          python3 -u - <<'PY'
+          import os, pty, select, subprocess, sys, time
+
+          code = os.environ.get("MOONCAKES_OAUTH_CODE", "").strip()
+          if not code:
+              print("MOONCAKES_OAUTH_CODE secret is empty", file=sys.stderr)
+              sys.exit(1)
+
+          pid, fd = pty.fork()
+          if pid == 0:
+              os.execvp("moon", ["moon", "login"])
+
+          buf = b""
+          sent_github = False
+          sent_code = False
+          sent_user = False
+          sent_yn = False
+          start = time.time()
+          while time.time() - start < 60:
+              r, _, _ = select.select([fd], [], [], 0.3)
+              if r:
+                  try:
+                      chunk = os.read(fd, 4096)
+                  except OSError:
+                      break
+                  if not chunk:
+                      break
+                  buf += chunk
+                  txt = chunk.decode("utf-8", errors="replace")
+                  print(txt.replace(code, "***"), end="", flush=True)
+                  if not sent_github and b"Github" in buf:
+                      time.sleep(0.2)
+                      os.write(fd, b"\x1b[B\r")
+                      sent_github = True
+                  elif sent_github and not sent_code and b"Please input the code:" in buf:
+                      time.sleep(0.2)
+                      os.write(fd, (code + "\r").encode("utf-8"))
+                      sent_code = True
+                  elif sent_code and not sent_user and (b"Username:" in buf or b"username" in buf.lower()):
+                      time.sleep(0.2)
+                      os.write(fd, b"snozzz\r")
+                      sent_user = True
+                  elif sent_code and not sent_yn and b"(Y/N)" in buf:
+                      time.sleep(0.2)
+                      os.write(fd, b"Y\r")
+                      sent_yn = True
+
+          _, st = os.waitpid(pid, 0)
+          if os.WEXITSTATUS(st) != 0:
+              sys.exit(os.WEXITSTATUS(st))
+
+          # Run moon publish via PTY in case CI confirmation prompt appears
+          pid2, fd2 = pty.fork()
+          if pid2 == 0:
+              os.execvp("moon", ["moon", "publish", "--verbose"])
+
+          buf2 = b""
+          confirmed = False
+          start2 = time.time()
+          while time.time() - start2 < 120:
+              r, _, _ = select.select([fd2], [], [], 0.3)
+              if r:
+                  try:
+                      chunk = os.read(fd2, 4096)
+                  except OSError:
+                      break
+                  if not chunk:
+                      break
+                  buf2 += chunk
+                  print(chunk.decode("utf-8", errors="replace"), end="", flush=True)
+                  if not confirmed and b"(Y/N)" in buf2:
+                      time.sleep(0.2)
+                      os.write(fd2, b"Y\r")
+                      confirmed = True
+
+          _, st2 = os.waitpid(pid2, 0)
+          sys.exit(os.WEXITSTATUS(st2))
+          PY
+
+      - name: Verify published package metadata on mooncakes.io
+        run: |
+          curl -fsSL "https://mooncakes.io/assets/snozzz/moongraft/module_index.json" | head -c 500 || true
