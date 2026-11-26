@@ -123,3 +123,66 @@ test "Python multiline parenthesized imports and decorated class methods round-t
   let (ok, _) = @lang.verify_well_formed(py_src, @cst.Python)
   assert_true(ok)
 }
+
+///|
+test "Go grouped imports, backtick struct tags, and distinct receiver methods round-trip" {
+  let go_src =
+    #|package server
+    #|
+    #|import (
+    #|	"context"
+    #|	"net/http"
+    #|)
+    #|
+    #|type Config struct {
+    #|	Addr string `json:"addr"`
+    #|	Port int    `json:"port"`
+    #|}
+    #|
+    #|type Client struct {
+    #|	Endpoint string
+    #|}
+    #|
+    #|func (s *Config) Close() error {
+    #|	return nil
+    #|}
+    #|
+    #|func (c *Client) Close() error {
+    #|	return nil
+    #|}
+    #|
+  assert_eq(@lang.detect_language("cmd/server/main.go"), @cst.Go)
+  let cst = @lang.parse_cst(go_src, @cst.Go)
+  assert_eq(cst.unparse(), go_src)
+  assert_false(cst.has_error)
+  let (ok, issues) = @lang.verify_well_formed(go_src, @cst.Go)
+  assert_true(ok)
+  assert_eq(issues.length(), 0)
+}
+
+///|
+test "C/C++ #include groups, namespaces, structs, and typed functions round-trip" {
+  let cpp_src =
+    #|#pragma once
+    #|#include <cstdint>
+    #|#include <string>
+    #|
+    #|namespace graft {
+    #|struct Span {
+    #|  uint32_t start;
+    #|  uint32_t end;
+    #|};
+    #|}
+    #|
+    #|static inline uint32_t span_len(uint32_t a, uint32_t b) {
+    #|  return b - a;
+    #|}
+    #|
+  assert_eq(@lang.detect_language("include/span.hpp"), @cst.Cpp)
+  let cst = @lang.parse_cst(cpp_src, @cst.Cpp)
+  assert_eq(cst.unparse(), cpp_src)
+  assert_false(cst.has_error)
+  let (ok, issues) = @lang.verify_well_formed(cpp_src, @cst.Cpp)
+  assert_true(ok)
+  assert_eq(issues.length(), 0)
+}

@@ -86,6 +86,8 @@ pub(all) enum Language {
   TypeScript
   Python
   Rust
+  Go
+  Cpp
   PlainText
 }
 pub fn Language::from_slug(StringView) -> Self?

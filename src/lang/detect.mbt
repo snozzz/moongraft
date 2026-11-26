@@ -42,6 +42,18 @@ pub fn detect_language(
   if lower.has_suffix(".rs") {
     return @cst.Rust
   }
+  if lower.has_suffix(".go") {
+    return @cst.Go
+  }
+  if lower.has_suffix(".c") ||
+    lower.has_suffix(".h") ||
+    lower.has_suffix(".cpp") ||
+    lower.has_suffix(".cc") ||
+    lower.has_suffix(".cxx") ||
+    lower.has_suffix(".hpp") ||
+    lower.has_suffix(".hh") {
+    return @cst.Cpp
+  }
 
   // Content heuristics when merging temporary `%O %A %B` Git paths without extension
   let trimmed = content.trim()
@@ -61,6 +73,12 @@ pub fn detect_language(
   if trimmed.has_prefix("import {") && content.contains("\"moonbitlang/") {
     return @cst.MoonManifest
   }
+  if trimmed.has_prefix("package ") && content.contains("\nfunc ") {
+    return @cst.Go
+  }
+  if content.contains("#include <") || content.contains("#include \"") {
+    return @cst.Cpp
+  }
   if content.contains("def ") && content.contains(":\n") {
     return @cst.Python
   }
@@ -77,7 +95,8 @@ pub fn parse_cst(source : String, lang : @cst.Language) -> @cst.CstNode {
     @cst.Json => parse_json_cst(source)
     @cst.Toml => parse_toml_cst(source)
     @cst.Yaml => parse_yaml_cst(source)
-    @cst.TypeScript | @cst.Rust => parse_c_family_code_cst(source, lang)
+    @cst.TypeScript | @cst.Rust | @cst.Go | @cst.Cpp =>
+      parse_c_family_code_cst(source, lang)
     @cst.Python => parse_python_cst(source)
     @cst.PlainText => parse_plaintext_cst(source)
   }
@@ -176,6 +195,24 @@ fn check_global_delimiters_balanced(
         }
       } else {
         sc.advance()
+      }
+    } else if ch == '`' && (lang == @cst.Go || lang == @cst.TypeScript) {
+      sc.advance()
+      let mut closed = false
+      while !sc.is_eof() {
+        if sc.peek() == Some('`') {
+          sc.advance()
+          closed = true
+          break
+        }
+        if lang == @cst.TypeScript && sc.peek() == Some('\\') {
+          sc.advance(count=2)
+        } else {
+          sc.advance()
+        }
+      }
+      if !closed {
+        return false
       }
     } else if sc.starts_with("#|") {
       let _ = sc.consume_to_eol(include_newline=true)

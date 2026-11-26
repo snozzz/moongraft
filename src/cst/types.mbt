@@ -10,6 +10,8 @@ pub(all) enum Language {
   TypeScript
   Python
   Rust
+  Go
+  Cpp
   PlainText
 }
 
@@ -25,6 +27,8 @@ pub fn Language::slug(self : Language) -> String {
     TypeScript => "typescript"
     Python => "python"
     Rust => "rust"
+    Go => "go"
+    Cpp => "cpp"
     PlainText => "plaintext"
   }
 }
@@ -43,6 +47,8 @@ pub fn Language::from_slug(name : StringView) -> Language? {
       Some(TypeScript)
     "python" | "py" => Some(Python)
     "rust" | "rs" => Some(Rust)
+    "go" | "golang" => Some(Go)
+    "c" | "cpp" | "cc" | "cxx" | "c++" | "h" | "hpp" | "hh" => Some(Cpp)
     "text" | "txt" | "plaintext" => Some(PlainText)
     _ => None
   }
