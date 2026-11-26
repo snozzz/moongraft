@@ -9,8 +9,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          core.autocrlf: false
 
       - name: Install latest MoonBit toolchain
         run: |
@@ -20,86 +18,98 @@ jobs:
       - name: Authenticate with mooncakes.io and publish module
         env:
           MOONCAKES_OAUTH_CODE: ${{ secrets.MOONCAKES_OAUTH_CODE }}
+          MOONCAKES_CREDENTIALS: ${{ secrets.MOONCAKES_CREDENTIALS }}
         run: |
           python3 -u - <<'PY'
-          import os, pty, select, subprocess, sys, time
+          import json, os, pty, select, sys, time, urllib.request
 
+          creds_json = os.environ.get("MOONCAKES_CREDENTIALS", "").strip()
           code = os.environ.get("MOONCAKES_OAUTH_CODE", "").strip()
-          if not code:
-              print("MOONCAKES_OAUTH_CODE secret is empty", file=sys.stderr)
+
+          def run_pty_cmd(argv, step_label, feed_rules, timeout_sec=90):
+              pid, fd = pty.fork()
+              if pid == 0:
+                  os.execvp(argv[0], argv)
+              buf = b""
+              fired = set()
+              t0 = time.time()
+              while time.time() - t0 < timeout_sec:
+                  r, _, _ = select.select([fd], [], [], 0.25)
+                  if r:
+                      try:
+                          chunk = os.read(fd, 4096)
+                      except OSError:
+                          break
+                      if not chunk:
+                          break
+                      buf += chunk
+                      txt = chunk.decode("utf-8", errors="replace")
+                      if code:
+                          txt = txt.replace(code, "***")
+                      print(txt, end="", flush=True)
+                      for idx, (needle, reply) in enumerate(feed_rules):
+                          if idx not in fired and needle in buf:
+                              time.sleep(0.25)
+                              os.write(fd, reply)
+                              fired.add(idx)
+              _, st = os.waitpid(pid, 0)
+              rc = os.WEXITSTATUS(st)
+              clean_out = buf.decode("utf-8", errors="replace")
+              if code:
+                  clean_out = clean_out.replace(code, "***")
+              clean_one_line = " | ".join(
+                  ln.strip() for ln in clean_out.splitlines() if ln.strip()
+              )[-400:]
+              if rc != 0:
+                  print(f"\n::error title={step_label}::{clean_one_line}", flush=True)
+              else:
+                  print(f"\n::notice title={step_label}::Succeeded ({clean_one_line})", flush=True)
+              return rc
+
+          if creds_json:
+              os.makedirs(os.path.expanduser("~/.moon"), exist_ok=True)
+              with open(os.path.expanduser("~/.moon/credentials.json"), "w", encoding="utf-8") as f:
+                  f.write(creds_json)
+          elif code:
+              # Check whether GitHub username `snozzz` is already registered on mooncakes.io
+              chk_url = "https://mooncakes.io/api/v0/username_validity_checks?username=snozzz"
+              req = urllib.request.urlopen(chk_url, timeout=15)
+              chk = json.loads(req.read().decode("utf-8"))
+              print("username_validity_checks(snozzz):", chk, flush=True)
+              is_unregistered = bool(chk.get("ok", False))
+
+              if is_unregistered:
+                  rc = run_pty_cmd(
+                      ["moon", "register"],
+                      "moon-register",
+                      [
+                          (b"Github", b"\x1b[B\r"),
+                          (b"Please input the code:", (code + "\r").encode("utf-8")),
+                          (b"username", b"snozzz\r"),
+                          (b"(Y/N)", b"Y\r"),
+                      ],
+                  )
+              else:
+                  rc = run_pty_cmd(
+                      ["moon", "login"],
+                      "moon-login",
+                      [
+                          (b"Github", b"\x1b[B\r"),
+                          (b"Please input the code:", (code + "\r").encode("utf-8")),
+                          (b"(Y/N)", b"Y\r"),
+                      ],
+                  )
+              if rc != 0:
+                  sys.exit(rc)
+          else:
+              print("::error title=auth::Neither MOONCAKES_CREDENTIALS nor MOONCAKES_OAUTH_CODE was set", flush=True)
               sys.exit(1)
 
-          pid, fd = pty.fork()
-          if pid == 0:
-              os.execvp("moon", ["moon", "login"])
-
-          buf = b""
-          sent_github = False
-          sent_code = False
-          sent_user = False
-          sent_yn = False
-          start = time.time()
-          while time.time() - start < 60:
-              r, _, _ = select.select([fd], [], [], 0.3)
-              if r:
-                  try:
-                      chunk = os.read(fd, 4096)
-                  except OSError:
-                      break
-                  if not chunk:
-                      break
-                  buf += chunk
-                  txt = chunk.decode("utf-8", errors="replace")
-                  print(txt.replace(code, "***"), end="", flush=True)
-                  if not sent_github and b"Github" in buf:
-                      time.sleep(0.2)
-                      os.write(fd, b"\x1b[B\r")
-                      sent_github = True
-                  elif sent_github and not sent_code and b"Please input the code:" in buf:
-                      time.sleep(0.2)
-                      os.write(fd, (code + "\r").encode("utf-8"))
-                      sent_code = True
-                  elif sent_code and not sent_user and (b"Username:" in buf or b"username" in buf.lower()):
-                      time.sleep(0.2)
-                      os.write(fd, b"snozzz\r")
-                      sent_user = True
-                  elif sent_code and not sent_yn and b"(Y/N)" in buf:
-                      time.sleep(0.2)
-                      os.write(fd, b"Y\r")
-                      sent_yn = True
-
-          _, st = os.waitpid(pid, 0)
-          if os.WEXITSTATUS(st) != 0:
-              sys.exit(os.WEXITSTATUS(st))
-
-          # Run moon publish via PTY in case CI confirmation prompt appears
-          pid2, fd2 = pty.fork()
-          if pid2 == 0:
-              os.execvp("moon", ["moon", "publish", "--verbose"])
-
-          buf2 = b""
-          confirmed = False
-          start2 = time.time()
-          while time.time() - start2 < 120:
-              r, _, _ = select.select([fd2], [], [], 0.3)
-              if r:
-                  try:
-                      chunk = os.read(fd2, 4096)
-                  except OSError:
-                      break
-                  if not chunk:
-                      break
-                  buf2 += chunk
-                  print(chunk.decode("utf-8", errors="replace"), end="", flush=True)
-                  if not confirmed and b"(Y/N)" in buf2:
-                      time.sleep(0.2)
-                      os.write(fd2, b"Y\r")
-                      confirmed = True
-
-          _, st2 = os.waitpid(pid2, 0)
-          sys.exit(os.WEXITSTATUS(st2))
+          rc2 = run_pty_cmd(
+              ["moon", "publish", "--verbose"],
+              "moon-publish",
+              [(b"(Y/N)", b"Y\r")],
+              timeout_sec=120,
+          )
+          sys.exit(rc2)
           PY
-
-      - name: Verify published package metadata on mooncakes.io
-        run: |
-          curl -fsSL "https://mooncakes.io/assets/snozzz/moongraft/module_index.json" | head -c 500 || true

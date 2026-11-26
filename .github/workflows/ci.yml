@@ -17,8 +17,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          core.autocrlf: false
 
       - name: Install latest MoonBit toolchain (Unix)
         if: runner.os != 'Windows'
