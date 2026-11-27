@@ -21,7 +21,7 @@ jobs:
           MOONCAKES_CREDENTIALS: ${{ secrets.MOONCAKES_CREDENTIALS }}
         run: |
           python3 -u - <<'PY'
-          import json, os, pty, select, sys, time, urllib.request
+          import os, pty, select, sys, time
 
           creds_json = os.environ.get("MOONCAKES_CREDENTIALS", "").strip()
           code = os.environ.get("MOONCAKES_OAUTH_CODE", "").strip()
@@ -34,7 +34,7 @@ jobs:
               fired = set()
               t0 = time.time()
               while time.time() - t0 < timeout_sec:
-                  r, _, _ = select.select([fd], [], [], 0.25)
+                  r, _, _ = select.select([fd], [], [], 0.2)
                   if r:
                       try:
                           chunk = os.read(fd, 4096)
@@ -59,7 +59,7 @@ jobs:
                   clean_out = clean_out.replace(code, "***")
               clean_one_line = " | ".join(
                   ln.strip() for ln in clean_out.splitlines() if ln.strip()
-              )[-400:]
+              )[-450:]
               if rc != 0:
                   print(f"\n::error title={step_label}::{clean_one_line}", flush=True)
               else:
@@ -71,34 +71,15 @@ jobs:
               with open(os.path.expanduser("~/.moon/credentials.json"), "w", encoding="utf-8") as f:
                   f.write(creds_json)
           elif code:
-              # Check whether GitHub username `snozzz` is already registered on mooncakes.io
-              chk_url = "https://mooncakes.io/api/v0/username_validity_checks?username=snozzz"
-              req = urllib.request.urlopen(chk_url, timeout=15)
-              chk = json.loads(req.read().decode("utf-8"))
-              print("username_validity_checks(snozzz):", chk, flush=True)
-              is_unregistered = bool(chk.get("ok", False))
-
-              if is_unregistered:
-                  rc = run_pty_cmd(
-                      ["moon", "register"],
-                      "moon-register",
-                      [
-                          (b"Github", b"\x1b[B\r"),
-                          (b"Please input the code:", (code + "\r").encode("utf-8")),
-                          (b"username", b"snozzz\r"),
-                          (b"(Y/N)", b"Y\r"),
-                      ],
-                  )
-              else:
-                  rc = run_pty_cmd(
-                      ["moon", "login"],
-                      "moon-login",
-                      [
-                          (b"Github", b"\x1b[B\r"),
-                          (b"Please input the code:", (code + "\r").encode("utf-8")),
-                          (b"(Y/N)", b"Y\r"),
-                      ],
-                  )
+              rc = run_pty_cmd(
+                  ["moon", "login"],
+                  "moon-login",
+                  [
+                      (b"Github", b"\x1b[B\r"),
+                      (b"Please input the code", (code + "\r").encode("utf-8")),
+                      (b"(Y/N)", b"Y\r"),
+                  ],
+              )
               if rc != 0:
                   sys.exit(rc)
           else:
