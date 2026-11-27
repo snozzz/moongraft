@@ -2,6 +2,11 @@ name: Publish to mooncakes.io
 
 on:
   workflow_dispatch:
+    inputs:
+      oauth_code:
+        description: "One-time GitHub OAuth code from mooncakes.io"
+        required: false
+        type: string
 
 jobs:
   publish:
@@ -17,14 +22,18 @@ jobs:
 
       - name: Authenticate with mooncakes.io and publish module
         env:
-          MOONCAKES_OAUTH_CODE: ${{ secrets.MOONCAKES_OAUTH_CODE }}
+          INPUT_OAUTH_CODE: ${{ inputs.oauth_code }}
+          SECRET_OAUTH_CODE: ${{ secrets.MOONCAKES_OAUTH_CODE }}
           MOONCAKES_CREDENTIALS: ${{ secrets.MOONCAKES_CREDENTIALS }}
         run: |
+          if [ -n "$INPUT_OAUTH_CODE" ]; then
+            echo "::add-mask::$INPUT_OAUTH_CODE"
+          fi
           python3 -u - <<'PY'
           import os, pty, select, sys, time
 
           creds_json = os.environ.get("MOONCAKES_CREDENTIALS", "").strip()
-          code = os.environ.get("MOONCAKES_OAUTH_CODE", "").strip()
+          code = (os.environ.get("INPUT_OAUTH_CODE") or os.environ.get("SECRET_OAUTH_CODE") or "").strip()
 
           def run_pty_cmd(argv, step_label, feed_rules, timeout_sec=90):
               pid, fd = pty.fork()
@@ -83,7 +92,7 @@ jobs:
               if rc != 0:
                   sys.exit(rc)
           else:
-              print("::error title=auth::Neither MOONCAKES_CREDENTIALS nor MOONCAKES_OAUTH_CODE was set", flush=True)
+              print("::error title=auth::No OAuth code or credentials provided", flush=True)
               sys.exit(1)
 
           rc2 = run_pty_cmd(
